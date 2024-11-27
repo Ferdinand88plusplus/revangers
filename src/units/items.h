@@ -230,7 +230,7 @@ struct BulletObject : BaseObject , BulletControlType
 	void DrawQuant(void);
 	void Touch(GeneralObject* p);
 	void Event(int type);
-	void CreateBullet(GunSlot* p,WorldBulletTemplate* n);
+	void CreateBullet(GunSlot *p, WorldBulletTemplate *n, Vector firePos, DBM fireMatrix);
 	void CreateBullet(Vector fv,Vector tv,GeneralObject* target,WorldBulletTemplate* p,GeneralObject* _Owner = NULL,int _speed = 0);
 	void TimeOutQuant(void);
 };
@@ -280,12 +280,13 @@ struct JumpBallObject : Object
 	int Mode;
 	int Power,DeltaPower;
 	int CraterType;
+	int Control;
 	VangerUnit* Owner;
 
 	void Init(void);
 	void Quant(void);
 	void DrawQuant(void);
-	void CreateBullet(GunSlot* p,WorldBulletTemplate* n);
+	void CreateBullet(GunSlot* p,WorldBulletTemplate* n, Vector firePos, DBM fireMatrix);
 	void Touch(GeneralObject* p);
 };
 
@@ -299,21 +300,28 @@ struct ClefObject : Object
 	int test_objects_collision();
 };
 
-struct SkyFarmerObject : Object
-{
-	int xSpeed,ySpeed;
-	int CornType,Corn,Timer;
+struct SkyFarmerObject: Object {
+	int xSpeed, ySpeed;
+	int CornType, Corn, Timer;
 	int DropCount;
 	int dTarget;
 	int SeedCount;
-	SensorDataType* TargetObject;
+	SensorDataType *TargetObject;
+
+	bool Contusion = 0;
+	DBV ImpactBuffer;
 
 	void Init(void);
-	void CreateSkyFarmer(int x_pos,int y_pos,int x_speed,int y_speed,int corn_type,int corn,int time);
+	void CreateSkyFarmer(
+		int x_pos, int y_pos, int x_speed, int y_speed, int corn_type, int corn, int time);
 	void Quant(void);
 	void DrawQuant(void);
-	SensorDataType* FindFarmer(int ID);
+	SensorDataType *FindFarmer(int ID);
+
+	void Touch(GeneralObject *obj);
+	int test_objects_collision();
 };
+
 
 const int DEFAULT_MAX_AMMO = 8;
 

@@ -52,7 +52,14 @@
 
 #include "../vss/sys.h"
 
+#include "../WDisp.h"
+#include "../actint/actevents.h"
+
+#include "../3d/general.h"
+
+
 #define INSECTOIDS
+//#define SPECTATOR_MODE
 
 int DbgCheckEnable;
 
@@ -2111,9 +2118,46 @@ void ModelDispatcher::Free(void)
 	delete[] Data;
 };
 
+
+// Kx of screen size
+float ResRectXKx;
+float ResRectSzXKx;
+
+int RES_DRAW_X;
+int RES_DRAW_SZX;
+
+int ResRectNormalCol;
+int ResRectDangerCol;
+
+double ResRectDangerColOn; // Switch res bar color if drawresource/drawresourcemax <= this
+
+
 void ActionDispatcher::Init(Parser& in)
 {
 	int i,j,k;
+
+		// Revangers::Oxygen bar fix
+	in.search_name("ResBarX_Kx");
+	ResRectXKx = in.get_double();
+
+	in.search_name("ResBarSizeX_Kx");
+	ResRectSzXKx = in.get_double();
+
+	in.search_name("ResBarNormal_Col");
+	ResRectNormalCol = in.get_int();
+
+	in.search_name("ResBarDanger_Col");
+	ResRectDangerCol = in.get_int();
+
+	in.search_name("ResBarSwitchOn_Procent");
+	ResRectDangerColOn = in.get_double();
+
+	ResRectDangerColOn /= 100.0;
+
+	RES_DRAW_X = xgrScreenSizeX * ResRectXKx;
+	RES_DRAW_SZX = xgrScreenSizeX * ResRectSzXKx;
+
+	//
 
 	UnitList::Init(in);
 
@@ -2326,6 +2370,8 @@ void ActionDispatcher::Open(Parser& in)
 
 	NumVisibleVanger = Total;
 	ProtractorLight = NULL;
+
+	ResetWeather();
 };
 
 void ActionDispatcher::Close(void)
@@ -2399,6 +2445,50 @@ XBuffer RaceTxtBuff(1024);
 
 int uvsWorldToCross(int fromWID, int toWID);
 
+uchar TripPal[768];
+
+void GenerateTripPal(void) {
+	int origId;
+	for (int i = 0; i < 768; i++) {
+		origId = i + 1;
+
+		TripPal[i] = (palbuf[origId % 768]);
+		// std::cout<<TripPal[i];
+	}
+}
+
+void ActionDispatcher::TripQuant(void) {
+	if (TripD.TripTime < TripD.TripStartCD) {
+		for (int i = 0; i < 768; i++) {
+			palbuf[i] -= TripD.TripSin;
+		}
+	} else {
+		if (TripD.TripTime >= TripD.RealTripCD) {
+			EffD.CreateDeform(Active->R_curr, 1, PASSING_WAVE_PROCESS);
+			if (!PalCD.Tail) {
+				GenerateTripPal();
+				PalCD.Set(CPAL_CHANGE_CYCLE, 20, TripPal);
+			}
+		} else {
+			for (int i = 0; i < 768; i++) {
+				palbuf[i] += TripD.TripSin;
+			}
+		}
+	}
+
+	if (TripD.TripTime == TripD.RealTripCD) {
+		camera_impulse(1024);
+		
+		memcpy(palbuf, palbufSrc, 768);
+	}
+}
+
+const int DROPS_COUNT = 10;
+
+void ActionDispatcher::RainQuant(void) 
+{
+}
+
 void ActionDispatcher::Quant(void)
 {
 	VangerUnit* p;
@@ -2412,6 +2502,9 @@ void ActionDispatcher::Quant(void)
 	int c_score[10],n2_score[10];
 	int drop_log;
 	uvsPassage* pass;	
+	
+	SkyFarmerObject *skyFarmer;
+
 
 	static unsigned int FragCnt = 0;
 
@@ -2442,6 +2535,18 @@ void ActionDispatcher::Quant(void)
 					};
 					p = (VangerUnit*)(p->NextTypeList);
 				};
+				skyFarmer = (SkyFarmerObject *)FarmerD.Tail;
+				while (skyFarmer) {
+					if (skyFarmer->ID == ID_SKYFARMER) {
+						if (skyFarmer->Visibility == VISIBLE) {
+							LocatorData[LocatorNum] = skyFarmer;
+							LocatorNum++;
+							if (LocatorPoint == skyFarmer)
+								lp_log = 0;
+						}
+					}
+					skyFarmer = (SkyFarmerObject *)(skyFarmer->NextBaseList);
+				}
 				if(lp_log) ChangeLocator();
 				break;
 			};
@@ -2451,7 +2556,7 @@ void ActionDispatcher::Quant(void)
 			LocatorPoint = NULL;
 
 		if(LocatorPoint){
-			LightData.set_position(LocatorPoint->R_curr.x,LocatorPoint->R_curr.y,LocatorPoint->R_curr.z);
+			LightData.set_position(LocatorPoint->R.x, LocatorPoint->R.y, LocatorPoint->R.z);
 			LightData.Quant();
 		};
 
@@ -2883,7 +2988,17 @@ void ActionDispatcher::Quant(void)
 	if(test_block((unsigned char*)&k_distance_to_force,20))
 		ErrH.Abort("test");
 */
+	if (Active) {
+		RainD.GenerateCenter = Active->R_curr;
+		TickWeather();
+		if (TripD.TripEffect)
+			TripQuant();
+		if (RainD.RainEffect)
+			RainQuant();
+	}
 };
+
+
 
 void ActionDispatcher::ChangeLocator(void)
 {
@@ -3233,6 +3348,7 @@ void camera_reset() {
 }
 
 void camera_quant(int X,int Y,int Turn,double V_abs) {
+#ifndef SPECTATOR_MODE
 	if(stop_camera)
 		return;
 
@@ -3339,8 +3455,37 @@ void camera_quant(int X,int Y,int Turn,double V_abs) {
 
 	SlopeAngle = result.getInt("slopeAngle", SlopeAngle);
 	TurnAngle = result.getInt("turnAngle", TurnAngle);
+#else
 
-	calc_view_factors();
+	SlopeAngle = XGR_MouseObj.PosZ << 4;
+
+	if (iKeyPressed(iKEY_MOVE_BACKWARD)) {
+		ViewY += 10;
+	} else if (iKeyPressed(iKEY_MOVE_FORWARD)) {
+		ViewY -= 10;
+	}
+	
+	if (iKeyPressed(iKEY_TURN_WHEELS_LEFT)) {
+		ViewX -= 10;
+	} else if (iKeyPressed(iKEY_TURN_WHEELS_RIGHT)) {
+		ViewX += 10;
+	}
+
+	if (iKeyPressed(iKEY_ACCELERATION)) {
+		TurnSecX -= 10;
+	} else if (iKeyPressed(iKEY_FIRE_ALL_WEAPONS)) {
+		TurnSecX += 10;
+	}
+
+	if(iKeyPressed(iKEY_TURN_OVER_LEFT)){
+		TurnAngle += 25;
+	}
+	if (iKeyPressed(iKEY_TURN_OVER_RIGHT)) {
+		TurnAngle -= 25;
+	}
+#endif
+
+		calc_view_factors();
 }
 
 void camera_impulse(int amplitude_8)
@@ -3409,8 +3554,8 @@ void ActionDispatcher::CameraQuant(void)
 		int Turn = Active -> psi;
 		//if(Active -> traction < 0)
 		//	Turn = rPI(Turn + PI);
-		camera_quant(Active -> R_curr.x,Active -> R_curr.y,Turn,Active -> V.vabs());
-//		fout < "camera_quant(x,y,t,v): " <= ViewX < "\t" <= ViewY < "\n";
+		camera_quant(Active->CamPos.x, Active->CamPos.y, Turn, Active->V.vabs());
+		//		fout < "camera_quant(x,y,t,v): " <= ViewX < "\t" <= ViewY < "\n";
 		}
 }
 
@@ -3606,8 +3751,9 @@ void VangerUnit::DrawQuant(void)
 					else BulletCollision((MaxEnergy + MaxArmor) / 20,NULL);
 				}else{
 					if(!(dynamic_state & TOUCH_OF_AIR)){
-						ChargeWeapon(this,ACI_MACHOTINE_GUN_LIGHT,1);
-						ChargeWeapon(this,ACI_MACHOTINE_GUN_HEAVY,1);
+						ChargeFamily(this, ItemFamily::Machotine, 1);
+						// ChargeWeapon(this,ACI_MACHOTINE_GUN_LIGHT,1);
+						// ChargeWeapon(this,ACI_MACHOTINE_GUN_HEAVY,1);
 						UseOxigenResource();
 						if(Speed){
 							p = (WaterParticleObject*)(EffD.GetObject(EFF_PARTICLE03));
@@ -3832,13 +3978,60 @@ void VangerUnit::StartMoleProcess(void)
 
 extern int uvsGamerWaitGame;
 
+#define LERPDEF(start, end, t) (start * (1 - t) + end * t)
+
+#define WORLD_TOP_IMP_DELTA 20
+#define IMP_KX 1
+
 void VangerUnit::Quant(void)
 {
+#ifdef SPECTATOR_MODE
+	if(Status & SOBJ_ACTIVE){
+		R.z = 256;
+		return;
+	}
+#endif
+
+	// Revangers::invisible roof on the world
+	/*
+	if (radius + R.z >= 256 - WORLD_TOP_IMP_DELTA) {
+		double impDelta = radius + R.z;
+		impDelta -= 256 - WORLD_TOP_IMP_DELTA;
+		impDelta *= IMP_KX;
+
+
+		impulse(DBV(0, 0, -1), impDelta);
+	}
+	*/
+
 	int cX[4],cY[4];
 	int cAlpha;
 	Vector vCheck;
 	int i;
 	StuffObject* p;
+	DBV TargetPos;
+
+	if (MoveCam2R || !TripD.TripEffect) {
+		CamPos = R;
+		MoveCam2R = 0;
+	}
+
+	if (TripD.TripEffect) {
+		CamImp += V * 1.5;
+		if (TripD.TripTime < TripD.RealTripCD) {
+			CamImp.x += sin(TripD.TripTime * 5) * 5;
+			CamImp.y += cos(TripD.TripTime * 5) * 5;
+		} else {
+			CamImp.x += sin((float)TripD.TripTime / 15.f) * 10;
+			CamImp.y += cos((float)TripD.TripTime / 15.f) * 10;
+		}
+
+		TargetPos = R + CamImp;
+
+		CamPos = LERPDEF(CamPos, TargetPos, 0.25);
+		CamImp /= 1.5;
+	}
+
 
 	if(Status & SOBJ_WAIT_CONFIRMATION) return;	
 	RuffaGunTime++;
@@ -4260,6 +4453,7 @@ void VangerUnit::Quant(void)
 			NETWORK_OUT_STREAM.end_body();
 		};
 	};
+
 };
 
 void VangerUnit::ShellUpdate(void)
@@ -4490,26 +4684,51 @@ void VangerUnit::InitEnvironment(void)
 
 					if(TouchKeyObjectFlag)	TouchKeyObject = NULL;
 					else TouchKeyObjectFlag = 1;
+					int RaffaID = GetRaffaID(uvsPoint);
+					WorldBulletTemplate RaffaBullet =
+						GameBulletData[WD_BULLET_RAFFA_START + RaffaID];
 
-					if(aiStatus & AI_STATUS_TNT){
-						if(PowerFlag & VANGER_POWER_RUFFA_GUN){
-							if(RuffaGunTime > (RUFFA_GUN_WAIT * WeaponWaitTime >> 8)){
+					if (aiStatus & AI_STATUS_TNT) {
+						if (PowerFlag & VANGER_POWER_RUFFA_GUN) {
+							if (RuffaGunTime > (RaffaBullet.WaitTime * WeaponWaitTime >> 8)) {
 								RuffaGunTime = 0;
-								g = BulletD.CreateBullet();
-								vCheck = Vector(64,0,0)*RotMat;
-								g->CreateBullet(Vector(R_curr.x,R_curr.y,R_curr.z),
-									Vector(XCYCL(vCheck.x + R_curr.x),YCYCL(vCheck.y + R_curr.y),R_curr.z + vCheck.z),NULL,&GameBulletData[WD_BULLET_RUFFA],this,Speed);
-								if(ActD.Active)
-									SOUND_RAFFA_SHOT(getDistX(ActD.Active->R_curr.x,R_curr.x));
+								bool WasShoot = 0;
+								for (int i = 0; i < MAX_SLOTS; i++) {
+									// null slot vector
+									if (!(R_slots[i].x && R_slots[i].y && R_slots[i].z))
+										continue;
+									WasShoot = 1;
+									g = BulletD.CreateBullet();
+									vCheck = Vector(64, 0, 0) * RotMat;
+									Vector ShotPos = R_curr;
+									ShotPos += A_l2g * (R_slots[i] * scale_real);
+
+									g->CreateBullet(
+										ShotPos,
+										Vector(
+											XCYCL(vCheck.x + ShotPos.x),
+											YCYCL(vCheck.y + ShotPos.y),
+											ShotPos.z + vCheck.z),
+										NULL,
+										&RaffaBullet,
+										this,
+										Speed);
+								}
+								if (ActD.Active && WasShoot)
+									SOUND_RAFFA_SHOT(getDistX(ActD.Active->R_curr.x, R_curr.x));
 							};
 						}else{
 							s = NULL;
 							l = -1;
 
 							for(i = 0;i < ItemMatrix->NumSlot;i++){
-								if(GunSlotData[ItemMatrix->nSlot[i]].pData && (GunSlotData[ItemMatrix->nSlot[i]].pData->BulletMode & BULLET_CONTROL_MODE::FLY) && (GunSlotData[ItemMatrix->nSlot[i]].pData->Power < l || l == -1)){
+								if (!GunSlotData[ItemMatrix->nSlot[i]].Slots[0]->pData) continue;
+
+								if ((GunSlotData[ItemMatrix->nSlot[i]].Slots[0]->pData->BulletMode & BULLET_CONTROL_MODE::FLY) &&
+									(GunSlotData[ItemMatrix->nSlot[i]].Slots[0]->pData->Power < l ||
+									 l == -1)) {
 									s = &GunSlotData[ItemMatrix->nSlot[i]];
-									l = GunSlotData[ItemMatrix->nSlot[i]].pData->Power;
+									l = GunSlotData[ItemMatrix->nSlot[i]].Slots[0]->pData->Power;
 								};
 							};
 							if(s) s->Fire();
@@ -4858,8 +5077,10 @@ void VangerUnit::AutomaticTouchSensor(SensorDataType* p) //znfo !!!
 				LowArmor = 0;
 				break;
 			case SensorTypeList::FIRE_UPDATE:				
-				ChargeWeapon(this,ACI_GHORB_GEAR_LIGHT,1);
-				ChargeWeapon(this,ACI_GHORB_GEAR_HEAVY,1);			
+				ChargeFamily(this, ItemFamily::Ghorb, 1);
+				// ChargeWeapon(this,ACI_GHORB_GEAR_LIGHT,1);
+				// ChargeWeapon(this,ACI_GHORB_GEAR_HEAVY,1);
+				// ChargeWeapon(this,ACI_GHORBULATOR, 1);	
 				break;
 		};
 	}else{
@@ -5965,10 +6186,16 @@ void VangerUnit::CreateVangerUnit(void)
 	PrevNetFunction83Time = NetFunction83Time = NetProtractorFunctionTime = NetMessiahFunctionTime = 0;
 };
 
-void VangerUnit::AddFree(void)
+void VangerUnit::AddFree(bool fast)
 {
 	int i;
 	Vector vCheck;	
+
+	//if(fast){
+	//	set_3D(SET_3D_DIRECT_PLACE, R_curr.x, R_curr.y, 255, 0, -Angle, 0);
+	//	return;
+	//}
+
 	if(Status & SOBJ_ACTIVE){
 		if(vSetVangerFlag != -1){
 			ExternalMode = EXTERNAL_MODE_OUT_VANGER;
@@ -6149,7 +6376,7 @@ void VangerUnit::AddSpot(SensorDataType* p)
 extern int preViewY;
 
 
-VangerUnit* addVanger(uvsVanger* p,int x,int y,int Human)
+VangerUnit* addVanger(uvsVanger* p,int x,int y,int Human, bool fast)
 {	
 	VangerUnit* n;
 
@@ -6187,12 +6414,16 @@ VangerUnit* addVanger(uvsVanger* p,int x,int y,int Human)
 		n->CreateTrackUnit();
 		n->CreateVangerUnit();
 		
-		if(NetworkON){
-			if(Human){
-				n->NetCreateVanger(NULL,NULL,NULL);
+		if (!fast) {
+			if (NetworkON) {
+				if (Human) {
+					n->NetCreateVanger(NULL, NULL, NULL);
+					n->AddFree();
+				} else
+					n->NetCreateSlave();
+			} else
 				n->AddFree();
-			}else n->NetCreateSlave();
-		}else n->AddFree();
+		}
 
 		ActD.ConnectObject(n);
 	};
@@ -6550,6 +6781,274 @@ VangerUnit* addVanger(uvsVanger* p,uvsSpot* origin,int Human)
 extern VangerUnit* actCurrentViewObject;
 void uvsChangeCycle(void);
 
+
+#define MAX_CMD_SIZE 256
+
+#define CmdInEnd() \
+	delete[] buf;  \
+	return
+
+#define CmdInLog(Log) std::cout << "VangerUnit::CmdIn() : " << Log << '\n'
+
+#define AbortCmd()                               \
+	std::cout << "Command input interrupted.\n"; \
+	delete[] buf;                                \
+	return
+
+#define GetCmd(cmdname)           \
+	std::cout << cmdname << ": "; \
+	buf = new char[MAX_CMD_SIZE]; \
+	memset(buf, 0, MAX_CMD_SIZE); \
+	std::cin >> buf;              \
+	if (!strcmp(buf, "cancel")) { \
+		AbortCmd();               \
+	}
+
+#define INLINE_CMD
+
+#ifndef INLINE_CMD
+#	define SubCmd(cmdname) GetCmd(cmdname)
+#else
+#	define SubCmd(cmdname) GetCmd("")
+#endif
+
+void VangerUnit::CmdIn(void) {
+	char *buf = 0;
+
+	GetCmd("Command");
+
+	if (!strcmp(buf, "testo")) {
+		std::cout << "TESTO\n";
+		CmdInEnd();
+	}
+	if (!strcmp(buf, "move_any")) {
+		delete[] buf;
+
+		SubCmd("Entity name(vanger)");
+
+		if (!strcmp(buf, "vanger")) {
+			VangerUnit *vanger = (VangerUnit *)ActD.Tail;
+			bool choosen = 0;
+			int seed = RND(50);
+			int cur = 0;
+			while (vanger) {
+				if (vanger != this) {
+					if (cur == seed) {
+						choosen = 1;
+						break;
+					}
+				} else if (cur == seed && cur == 0)
+					break;
+
+				if (seed > 0)
+					seed--;
+				cur++;
+				vanger = (VangerUnit *)vanger->NextTypeList;
+				if (!vanger) {
+					vanger = (VangerUnit *)ActD.Tail;
+					cur = 0;
+				}
+			}
+
+			if (!choosen) {
+				CmdInLog("Failed to move vanger: no any vangers on world or generaited bad seed. ");
+				AbortCmd();
+			}
+
+			vanger->R = DBV(R.x, R.y, 256);
+
+			CmdInEnd();
+		}
+
+		CmdInLog("Unknown entity: " << buf);
+
+		CmdInEnd();
+	}
+	if (!strcmp(buf, "spawn")) {
+		delete[] buf;
+
+		SubCmd("Entity name(skyfarmer)");
+
+		if (!strcmp(buf, "skyfarmer")) {
+			if (!uvsPoint->Pworld->escTmax) {
+				CmdInLog("Cant create skyfarmer on the world without any escave.");
+				AbortCmd();
+			}
+
+			uvsBunch *worldBunch = uvsPoint->Pworld->escT[0]->Pbunch;
+			uvsCultGame *worldGame = worldBunch->cycleTable[worldBunch->currentStage].Pgame;
+
+			int cornType = 0;
+			if (worldGame) {
+				if (worldGame->GameType == UVS_GAME_TYPE::HARVEST) {
+					cornType = worldGame->GoodsTypeBeg;
+				}
+			}
+
+			addFarmer(
+				R.x,
+				R.y,
+				V_SPEED_DOLLY - RND(V_SPEED_DOLLY * 2 + 1),
+				V_SPEED_DOLLY - RND(V_SPEED_DOLLY * 2 + 1),
+				cornType,
+				FLY_FARMER_CORN,
+				FLY_FARMER_LIVE);
+
+			CmdInEnd();
+		}
+
+		CmdInLog("Unknown entity: " << buf);
+
+		CmdInEnd();
+	}
+	if (!strcmp(buf, "nextcycle")) {
+		uvsChangeCycle();
+		CmdInEnd();
+	}
+	if (!strcmp(buf, "gotoe")) {
+		delete[] buf;
+		SubCmd("Escave ID");
+
+		int GotoID = atoi(buf);
+
+		uvsEscave *Goto = 0;
+		if (uvsPoint->Pworld->escTmax <= GotoID || GotoID < 0) {
+			CmdInLog("Spot ID is out of range.");
+			AbortCmd();
+		}
+
+		Goto = uvsPoint->Pworld->escT[GotoID];
+
+		R.x = Goto->pos_x;
+		R.y = Goto->pos_y;
+		R.z = 512;
+
+		CmdInEnd();
+	}
+	if (!strcmp(buf, "gotos")) {
+		delete[] buf;
+		SubCmd("Spot ID");
+
+		int GotoID = atoi(buf);
+
+		uvsSpot *Goto = 0;
+		if (uvsPoint->Pworld->sptTmax <= GotoID || GotoID < 0) {
+			CmdInLog("Escave ID is out of range.");
+			AbortCmd();
+		}
+
+		Goto = uvsPoint->Pworld->sptT[GotoID];
+
+		R.x = Goto->pos_x;
+		R.y = Goto->pos_y;
+		R.z = 512;
+
+		CmdInEnd();
+	}
+	if (!strcmp(buf, "setbeebos")) {
+		delete[] buf;
+
+		SubCmd("Num");
+
+		aciUpdateCurCredits(aciGetCurCredits() + atoi(buf));
+
+		CmdInEnd();
+	}
+	if (!strcmp(buf, "gotow")) {
+		delete[] buf;
+
+		SubCmd("World");
+
+		int GotoWorld = -1;
+
+		// Lowercase.
+		// 97 - 'a' (and the number where from the lowercase alphabet starts)
+		if (buf[0] < 97) {
+			// 32 - distance between 'A' and 'a' (aka distance between lowercase and highcase)
+			buf[0] += 32;
+		}
+
+		switch (buf[0]) {
+		default:
+			CmdInLog("Unknown world: " << buf);
+			AbortCmd();
+			break;
+
+		// i dont fucking know WHY, but the WORLD_FOSTRAL teleports to glorx, and the WORLD_GLORX
+		// teleports to fostral...
+		case 'f':
+			GotoWorld = WORLD_GLORX;
+			break;
+		case 'g':
+			GotoWorld = WORLD_FOSTRAL;
+			break;
+
+		case 'n':
+			GotoWorld = WORLD_NECROSS;
+			break;
+		case 'x':
+			GotoWorld = WORLD_XPLO;
+			break;
+		case 'a':
+			GotoWorld = WORLD_ARKONOY;
+			break;
+		case 'h':
+			GotoWorld = WORLD_HMOK;
+			break;
+		case 'b':
+			GotoWorld = WORLD_BOOZEENA;
+			break;
+		case 'k':
+			GotoWorld = WORLD_KHOX;
+			break;
+		case 't':
+			GotoWorld = WORLD_THREALL;
+			break;
+		case 'w':
+			GotoWorld = WORLD_WEEXOW;
+			break;
+		}
+
+		// old var, too slow 
+		//aciSendEvent2actint(EV_TELEPORT, 0, GotoWorld);
+
+		// from vangerunit::quant 
+		EffectsOff();
+
+		uvsPoint->Pworld->GamerVisit++;
+
+		if (WorldTable[GotoWorld]->escTmax) {
+			uvsCurrentCycle = WorldTable[GotoWorld]->escT[0]->Pbunch->currentStage;
+			if (uvsPoint->Pworld->escT[0]->Pbunch->status == UVS_BUNCH_STATUS::UNABLE)
+				uvsCurrentWorldUnable = 1;
+			else
+				uvsCurrentWorldUnable = 0;
+		} else {
+			uvsCurrentCycle = 0;
+			uvsCurrentWorldUnable = 0;
+		}
+
+		if (WorldTable[GotoWorld]->escTmax)
+			aci_curLocationName = WorldTable[GotoWorld]->escT[0]->name;
+		else
+			aci_curLocationName = "";
+
+		ChangeWorld(GotoWorld, 1, 1);	  // смена мира
+		VangerUnit* me = addVanger(uvsPoint, R_curr.x, R_curr.y % (1 << MAP_POWER_Y), 1, 1); // человек
+		uvsWorldReload(GotoWorld);
+		if (!uvsPoint->Pworld->GamerVisit) {
+			ShowDominanceMessage(10);
+			GamerResult.dominance += 10;
+			if (GamerResult.dominance > 100)
+				GamerResult.dominance = 100;
+		}
+
+		CmdInEnd();
+	}
+	CmdInLog("Unknown command: " << buf);
+}
+
+
 void VangerUnit::NewKeyHandler(void)
 {
 	Vector vCheck;
@@ -6559,6 +7058,10 @@ void VangerUnit::NewKeyHandler(void)
 	int i;
 	StuffObject* p;
 	StuffObject* n;
+
+	if (iKeyPressed(iKEY_CMD)) {
+		CmdIn();
+	}
 
 	
 	if(iKeyPressed(iKEY_USE_GLUEK)){
@@ -6695,15 +7198,35 @@ void VangerUnit::NewKeyHandler(void)
 	};
 
 	if(iKeyPressed(iKEY_FIRE_ALL_WEAPONS)){
-		if(PowerFlag & VANGER_POWER_RUFFA_GUN){
-			if(RuffaGunTime > (RUFFA_GUN_WAIT * WeaponWaitTime >> 8)){
+		if (PowerFlag & VANGER_POWER_RUFFA_GUN) {
+			int RaffaID = GetRaffaID(uvsPoint);
+			WorldBulletTemplate RaffaBullet = GameBulletData[WD_BULLET_RAFFA_START + RaffaID];
+			if (RuffaGunTime > (RaffaBullet.WaitTime * WeaponWaitTime >> 8)) {
 				RuffaGunTime = 0;
-				g = BulletD.CreateBullet();
-				vCheck = Vector(64,0,0)*RotMat;
-				g->CreateBullet(Vector(R_curr.x,R_curr.y,R_curr.z),
-					Vector(XCYCL(vCheck.x + R_curr.x),YCYCL(vCheck.y + R_curr.y),R_curr.z + vCheck.z),NULL,&GameBulletData[WD_BULLET_RUFFA],this,Speed);
-				if(ActD.Active)
-					SOUND_RAFFA_SHOT(getDistX(ActD.Active->R_curr.x,R_curr.x));
+				bool WasShoot = 0;
+				for (int i = 0; i < MAX_SLOTS; i++) {
+					// null slot vector
+					if (!(R_slots[i].x && R_slots[i].y && R_slots[i].z))
+						continue;
+					WasShoot = 1;
+					g = BulletD.CreateBullet();
+					vCheck = Vector(64, 0, 0) * RotMat;
+					Vector ShotPos = R_curr;
+					ShotPos += A_l2g * (R_slots[i] * scale_real);
+
+					g->CreateBullet(
+						ShotPos,
+						Vector(
+							XCYCL(vCheck.x + ShotPos.x),
+							YCYCL(vCheck.y + ShotPos.y),
+							ShotPos.z + vCheck.z),
+						NULL,
+						&RaffaBullet,
+						this,
+						Speed);
+				}
+				if (ActD.Active && WasShoot)
+					SOUND_RAFFA_SHOT(getDistX(ActD.Active->R_curr.x, R_curr.x));
 
 				if(NetworkON){
 					NetRuffaGunTime = GLOBAL_CLOCK();
@@ -6713,9 +7236,10 @@ void VangerUnit::NewKeyHandler(void)
 		}else{
 			ActD.ActiveAllSlots();
 		};
+
 	};	
 
-	if(iKeyPressed(iKEY_CHANGE_TARGET))
+	if(iKeyPressedOnce(iKEY_CHANGE_TARGET))
 		ActD.ChangeLocator();
 
 	if((Status & SOBJ_ACTIVE) && (Status & SOBJ_AUTOMAT) && 
@@ -6753,8 +7277,8 @@ void VangerUnit::keyhandler(int key)
 					RuffaGunTime = 0;
 					g = BulletD.CreateBullet();
 					vCheck = Vector(64,0,0)*RotMat;
-					g->CreateBullet(Vector(R_curr.x,R_curr.y,R_curr.z),
-						Vector(XCYCL(vCheck.x + R_curr.x),YCYCL(vCheck.y + R_curr.y),R_curr.z + vCheck.z),NULL,&GameBulletData[WD_BULLET_RUFFA],this,Speed);
+					//g->CreateBullet(Vector(R_curr.x,R_curr.y,R_curr.z),
+					//	Vector(XCYCL(vCheck.x + R_curr.x),YCYCL(vCheck.y + R_curr.y),R_curr.z + vCheck.z),NULL,&GameBulletData[WD_BULLET_RUFFA],this,Speed);
 					if(ActD.Active)
 						SOUND_MACHOTINE_SHOT(getDistX(ActD.Active->R_curr.x,R_curr.x));
 				};
@@ -7037,6 +7561,7 @@ void uvsUnitType::CreateUnitType(uvsVanger* p)
 
 	DestroyClass = sc->MaxDamage;
 
+	/*
 	switch(uvsPoint->Pmechos->type){
 		case 0:
 		case 1:
@@ -7077,6 +7602,8 @@ void uvsUnitType::CreateUnitType(uvsVanger* p)
 			ItemMatrix = &UnitMatrixData[28];
 			break;
 	};	
+	*/
+	ItemMatrix = &UnitMatrixData[uvsMechosTable[uvsPoint->Pmechos->type]->UnitMatrixID];
 };
 
 void uvsUnitType::AddDevice(StuffObject* p)
@@ -7329,7 +7856,9 @@ void VangerUnit::Go2World(void)
 	for(i = 0;i < ItemMatrix->FullNum;i++) ItemMatrixData[i] = 0;
 
 	for(i = 0;i < MAX_ACTIVE_SLOT;i++){
-		GunSlotData[i].pData = NULL;
+		for (int j = 0; j < GunSlotData[i].Slots.size(); j++) {
+			GunSlotData[i].Slots[j]->pData = NULL;
+		}
 		GunSlotData[i].Owner = NULL;
 	};
 
@@ -7487,13 +8016,14 @@ int uvsCheckItemOnLive(int type);
 void uvsOnKillItem(void);
 void VangerUnit::CheckOutDevice(StuffObject* p)
 {
-	int i;
+	int i, j;
 	if(Status & SOBJ_ACTIVE)
 		uvsDomChangeFromItem(p->uvsDeviceType, 0, 1);
 
 	if(!(Status & SOBJ_ACTIVE)){
 		for(i = 0;i < MAX_ACTIVE_SLOT;i++)
-			if(GunSlotData[i].pData && GunSlotData[i].ItemData == p) GunSlotData[i].CloseGun();
+			for (j = 0; j < GunSlotData[i].Slots.size(); j++)
+				if(GunSlotData[i].Slots[j]->pData && GunSlotData[i].Slots[j]->ItemData == p) GunSlotData[i].CloseGun(j);
 	};
 	
 	StuffObject* n;
@@ -7585,13 +8115,13 @@ void VangerUnit::ItemQuant(void)
 	StuffObject* p;
 	StuffObject* pp;
 	actintItemData* n;
-	int i;
+	int i, j;
 	
 	if(!VangerChanger){
 		if(NetworkON && !(Status & SOBJ_ACTIVE)){
 			for(i = 0;i < ItemMatrix->NumSlot;i++){
 				GunSlotData[ItemMatrix->nSlot[i]].NetStuffQuant();
-				if(GunSlotData[ItemMatrix->nSlot[i]].pData)
+				if(GunSlotData[ItemMatrix->nSlot[i]].Slots[0]->pData)
 					GunSlotData[ItemMatrix->nSlot[i]].Quant();
 			};
 			if(Armor <= 0) Destroy();
@@ -7627,8 +8157,8 @@ void VangerUnit::ItemQuant(void)
 				}else Energy = MaxEnergy;
 
 				for(i = 0;i < MAX_ACTIVE_SLOT;i++)
-					if(GunSlotData[i].pData)
-						GunSlotData[i].Quant();	
+					GunSlotData[i].Quant();	
+						
 			};
 		};
 		
@@ -7975,6 +8505,15 @@ void aciSendEvent2itmdsp(int code,actintItemData* p,int data)
 				break;
 			case ACI_ACTIVATE_ITEM:
 				switch(p->type){
+					case ACI_TOXICK:
+						TripD.TripEffect = 1;
+						ObjectDestroy((StuffObject*)(p->stuffOwner));
+						(ActD.Active)->CheckOutDevice((StuffObject*)(p->stuffOwner));
+						ActD.CheckDevice((StuffObject*)(p->stuffOwner));
+						((StuffObject*)(p->stuffOwner))->Storage->Deactive((StuffObject*)(p->stuffOwner));
+						(ActD.Active)->DelDevice((StuffObject*)(p->stuffOwner));
+						aciSendEvent2actint(ACI_DROP_ITEM,p);
+						break;
 					case ACI_EMPTY_CIRTAINER:
 						if(ActD.Active->dynamic_state & (GROUND_COLLISION | WHEELS_TOUCH)){
 							ActD.Active->uvsPoint->gatherCirt(ActD.Active->R_curr.x,ActD.Active->R_curr.y,((StuffObject*)(p->stuffOwner))->ActIntBuffer.data0,((StuffObject*)(p->stuffOwner))->ActIntBuffer.data1);
@@ -8022,13 +8561,20 @@ void aciSendEvent2itmdsp(int code,actintItemData* p,int data)
 						break;
 					default:
 						p->flags |= ACI_ACTIVE;
-						ActD.SlotIn(data,(StuffObject*)(p->stuffOwner));
+						
 						break;
 				};
 				break;
 			case ACI_DEACTIVATE_ITEM:
 				p->flags &= ~ACI_ACTIVE;
+				break;
+			case ACI_SLOT_OUT:
 				ActD.SlotOut((StuffObject*)(p->stuffOwner));
+
+				break;
+			case ACI_SLOT_IN:
+			
+				ActD.SlotIn(data,(StuffObject*)(p->stuffOwner));
 				break;
 			case ACI_SHOW_ITEM_TEXT:
 				if(p->type == ACI_TABUTASK_SUCCESSFUL){
@@ -8063,7 +8609,7 @@ void aciSendEvent2itmdsp(int code,actintItemData* p,int data)
 
 void ActionDispatcher::SlotIn(int n,StuffObject* p)
 {	
-	Slot[n] = p;
+
 	switch(p->StuffType){
 		case DEVICE_ID_GUN:
 			Active->GunSlotData[n].OpenGun((GunDevice*)(p));
@@ -8074,43 +8620,39 @@ void ActionDispatcher::SlotIn(int n,StuffObject* p)
 
 void ActionDispatcher::SlotOut(StuffObject* p)
 {
-	int i;
-	for(i = 0;i < MAX_ACTIVE_SLOT;i++)
-		if(Active && Slot[i] && p == Slot[i]) break;
+	char slot = ((GunDevice*)(p))->ActIntBuffer.slot;
+	if(slot == -1) return;
 
-	if(i == MAX_ACTIVE_SLOT) 
-		return;
 
-	Slot[i]->Deactive();
-	Slot[i] = NULL;
-
-	switch(p->StuffType){
-		case DEVICE_ID_GUN:
-			Active->GunSlotData[i].CloseGun();			
-			break;
-	};
-	p->ActIntBuffer.slot = -1;
+	GunSlot &gunSlot = Active->GunSlotData[slot];
+	
+	gunSlot.CloseGun(((GunDevice*)(p))->ActIntBuffer.subslot);
 };
 
 void ActionDispatcher::CheckDevice(StuffObject* p)
 {
-	int i;
+	int i, j;
 	for(i = 0;i < MAX_ACTIVE_SLOT;i++){
-		if(Slot[i] == p){
-			if(p->ActIntBuffer.slot >= 0 && p->ActIntBuffer.slot < MAX_SLOTS)
-				Active->GunSlotData[p->ActIntBuffer.slot].CloseGun();
-			Slot[i] = NULL;
-			p->ActIntBuffer.slot = -1;
-			return;
-		};
+		for (j = 0; j < Active->GunSlotData[i].Slots.size(); j++) {
+			if (((StuffObject *)(Active->GunSlotData[i].Slots[j]->ItemData)) == p){
+				if (p->ActIntBuffer.slot >= 0 && p->ActIntBuffer.slot < MAX_SLOTS){
+					Active->GunSlotData[p->ActIntBuffer.slot].CloseGun(j);
+				}
+				p->ActIntBuffer.slot = -1;
+				return;
+			}
+		}
 	};
+
 };
 
 void ActionDispatcher::DeactiveAllSlots(void)
 {
-	int i;
-	for(i = 0;i < MAX_ACTIVE_SLOT;i++)
-		if(Slot[i]) Slot[i]->Deactive();
+	//int i;
+	//for(i = 0;i < MAX_ACTIVE_SLOT;i++)
+	//	if(Slot[i]) Slot[i]->Deactive();
+
+	
 };
 
 void ActionDispatcher::ActiveAllSlots(void)
@@ -8118,6 +8660,7 @@ void ActionDispatcher::ActiveAllSlots(void)
 	int i;
 	for(i = 0;i < MAX_ACTIVE_SLOT;i++)
 		ActiveSlot(i);
+
 };
 
 void ActionDispatcher::ActiveAllTerminator(void)
@@ -8129,13 +8672,25 @@ void ActionDispatcher::ActiveAllTerminator(void)
 
 void ActionDispatcher::ActiveSlot(int n)
 {
-	if(Slot[n] && Active && Slot[n]->StuffType == DEVICE_ID_GUN && !isTerminator(Slot[n]->ActIntBuffer.type))
+	if (!Active)
+		return;
+	if (!Active->GunSlotData[n].Slots.size())
+		return;
+
+	// well, terminator slot is will be only for one terminator?
+	if (!isTerminator(Active->GunSlotData[n].Slots[0]->ItemData->ActIntBuffer.type))
 		Active->GunSlotData[n].Fire();
+
 };
 
 void ActionDispatcher::ActiveTerminatorSlot(int n)
 {
-	if(Slot[n] && Active && Slot[n]->StuffType == DEVICE_ID_GUN && isTerminator(Slot[n]->ActIntBuffer.type))
+	if (!Active)
+		return;
+	if (!Active->GunSlotData[n].Slots.size())
+		return;
+
+	if (isTerminator(Active->GunSlotData[n].Slots[0]->ItemData->ActIntBuffer.type))
 		Active->GunSlotData[n].Fire();
 };
 
@@ -8144,7 +8699,7 @@ actintItemData::actintItemData(void)
 	type = -1;
 	data0 = data1 = maxData = -1;
 	flags = 0;
-	slot = -1;
+	slot = subslot = -1;
 };
 
 actintItemData::actintItemData(int tp)
@@ -8195,43 +8750,73 @@ extern int aciMaxDvcResource;
 
 void aOutStr(int x,int y,int font,int color,unsigned char* str,int space);
 
+char ResBarCurrentCol = 0;
 
-void ActionDispatcher::DrawResource(void)
-{
+void ActionDispatcher::DrawResource(void) {
+	if (!Active)
+		return;
 	int i;
-	int y0,x0,sx;
+	int y0, x0, sx;
 	int x1;
-	int cclx,ccly,ccrx,ccry;
+	int cclx, ccly, ccrx, ccry;
+	double DrawResKx = (double)(Active->OxigenResource) / (double)(Active->MaxOxigenResource);
 
 	cclx = XGR_Obj.clipLeft;
 	ccly = XGR_Obj.clipTop;
 	ccrx = XGR_Obj.clipRight;
 	ccry = XGR_Obj.clipBottom;
 
-	XGR_SetClip(UcutLeft,VcutUp,UcutRight,VcutDown);
+	XGR_SetClip(UcutLeft, VcutUp, UcutRight, VcutDown);
 
 	y0 = VcutDown - RES_DRAW_DOWN;
-	x0 = UcutRight - RES_DRAW_LEFT;
-	x1 = UcutLeft + RES_DRAW_LEFT;
-	sx = x0 - x1;
+	// Revangers::Oxygen bar fix
+	// x0 = UcutRight - RES_DRAW_LEFT;
+	// x1 = UcutLeft + RES_DRAW_LEFT;
+	// sx = x0 - x1;
+	x0 = RES_DRAW_X;
+	sx = RES_DRAW_SZX;
 
-	if(DrawResourceValue > 0){
-		XGR_Rectangle(x0 - sx * DrawResourceValue / DrawResourceMaxValue,y0,sx * DrawResourceValue / DrawResourceMaxValue,RES_DRAW_STEP_Y,228,228,XGR_FILLED);
+	if (DrawResourceValue > 0) {
+		if (DrawResKx <= ResRectDangerColOn) {
+			ResBarCurrentCol = ResRectDangerCol;
+		} else {
+			ResBarCurrentCol = ResRectNormalCol;
+		}
+
+		XGR_Rectangle(
+			// x0 - sx * DrawResourceValue / DrawResourceMaxValue,
+			x0,
+			y0,
+			sx * DrawResourceValue / DrawResourceMaxValue,
+			RES_DRAW_STEP_Y,
+			ResRectNormalCol,
+			ResBarCurrentCol,
+			XGR_FILLED);
 		DrawResourceValue = -DrawResourceValue;
 		DrawResourceTime = 130;
-	}else{
-		if(DrawResourceTime > 0){
-			XGR_Rectangle(x0 + sx * DrawResourceValue / DrawResourceMaxValue,y0,-sx * DrawResourceValue / DrawResourceMaxValue,RES_DRAW_STEP_Y,228,228,XGR_FILLED);
+	} else {
+		if (DrawResourceTime > 0) {
+			XGR_Rectangle(
+				// x0 - sx * DrawResourceValue / DrawResourceMaxValue,
+				x0,
+				y0,
+				sx * -DrawResourceValue / DrawResourceMaxValue,
+				RES_DRAW_STEP_Y,
+				ResRectNormalCol,
+				ResBarCurrentCol,
+				XGR_FILLED);
 			DrawResourceTime -= 128 / 20;
 		};
 	};
 
-	if(Active){
+	if (Active) {
 		aciMaxDvcResource = 1;
 		aciCurDvcResource = 0;
 
-		for(i = 0;i < MAX_ACTIVE_SLOT;i++){
-			if(Slot[i] && (Slot[i]->ActIntBuffer.type == ACI_COPTE_RIG || Slot[i]->ActIntBuffer.type == ACI_CROT_RIG || Slot[i]->ActIntBuffer.type == ACI_CUTTE_RIG)){
+		for (i = 0; i < MAX_ACTIVE_SLOT; i++) {
+			if (Slot[i] && (Slot[i]->ActIntBuffer.type == ACI_COPTE_RIG ||
+							Slot[i]->ActIntBuffer.type == ACI_CROT_RIG ||
+							Slot[i]->ActIntBuffer.type == ACI_CUTTE_RIG)) {
 				aciCurDvcResource = Slot[i]->ActIntBuffer.data1;
 				aciMaxDvcResource = uvsItemTable[Slot[i]->uvsDeviceType]->param2 + 1;
 				break;
@@ -8239,39 +8824,42 @@ void ActionDispatcher::DrawResource(void)
 		};
 	};
 
-	if(SkyQuakeEnable)
+	if (SkyQuakeEnable)
 		SkyQuakeEnable = SkyQuake.quant(3);
 
-	if(SkyQuakeEnable2){
+	if (SkyQuakeEnable2) {
 		SkyQuakeEnable2 = SkyQuake2.quant(5);
-		if(!SkyQuakeEnable2 && FunctionSpobsDestroyActive && ActD.Active){
-			SkyQuake2.set(ActD.Active->R_scr.x,ActD.Active->R_scr.y,20,SKY_QUAKE_RADIUS,SKY_QUAKE_DELTA);
+		if (!SkyQuakeEnable2 && FunctionSpobsDestroyActive && ActD.Active) {
+			SkyQuake2.set(
+				ActD.Active->R_scr.x, ActD.Active->R_scr.y, 20, SKY_QUAKE_RADIUS, SKY_QUAKE_DELTA);
 			SkyQuakeEnable2 = 1;
 		};
 	};
 
-	if(SkyQuakeEnable3){
-		SkyQuake3.set(ScreenCX,ScreenCY,PALLADIUM_RADIUS,PALLADIUM_RADIUS);
+	if (SkyQuakeEnable3) {
+		SkyQuake3.set(ScreenCX, ScreenCY, PALLADIUM_RADIUS, PALLADIUM_RADIUS);
 		SkyQuakeEnable3 = SkyQuake3.quant(5);
 	};
 
-/*     	v = (PhantomUnit*)(PhantomD.Tail);
-	while(v){
-		if(v->MyName && v->Visibility == VISIBLE)
-			aOutStr(v->R_scr.x,v->R_scr.y + v->rmax_screen,4,224,(unsigned char*)(v->MyName),1);
-		v = (PhantomUnit*)(v->NextTypeList);
-	};*/
+	/*     	v = (PhantomUnit*)(PhantomD.Tail);
+		while(v){
+			if(v->MyName && v->Visibility == VISIBLE)
+				aOutStr(v->R_scr.x,v->R_scr.y + v->rmax_screen,4,224,(unsigned char*)(v->MyName),1);
+			v = (PhantomUnit*)(v->NextTypeList);
+		};*/
 
-	XGR_SetClip(cclx,ccly,ccrx,ccry);
+	XGR_SetClip(cclx, ccly, ccrx, ccry);
 
-//	const int DCC[4] = {239,143,159,175};
-//	for(i = 0;i < TntTableSize;i++){
-//		putMapPixel(TntObjectData[i]->R_curr.x,TntObjectData[i]->R_curr.y,DCC[TntObjectData[i]->MasterID]);
-//		putMapPixel(TntObjectData[i]->R_curr.x + 1,TntObjectData[i]->R_curr.y + 1,DCC[TntObjectData[i]->MasterID]);
-//		putMapPixel(TntObjectData[i]->R_curr.x - 1,TntObjectData[i]->R_curr.y - 1,DCC[TntObjectData[i]->MasterID]);
-//		putMapPixel(TntObjectData[i]->R_curr.x + 1,TntObjectData[i]->R_curr.y - 1,DCC[TntObjectData[i]->MasterID]);
-//		putMapPixel(TntObjectData[i]->R_curr.x - 1,TntObjectData[i]->R_curr.y + 1,DCC[TntObjectData[i]->MasterID]);
-//	};
+	//	const int DCC[4] = {239,143,159,175};
+	//	for(i = 0;i < TntTableSize;i++){
+	//		putMapPixel(TntObjectData[i]->R_curr.x,TntObjectData[i]->R_curr.y,DCC[TntObjectData[i]->MasterID]);
+	//		putMapPixel(TntObjectData[i]->R_curr.x + 1,TntObjectData[i]->R_curr.y +
+	//1,DCC[TntObjectData[i]->MasterID]); 		putMapPixel(TntObjectData[i]->R_curr.x -
+	//1,TntObjectData[i]->R_curr.y - 1,DCC[TntObjectData[i]->MasterID]);
+	//		putMapPixel(TntObjectData[i]->R_curr.x + 1,TntObjectData[i]->R_curr.y -
+	//1,DCC[TntObjectData[i]->MasterID]); 		putMapPixel(TntObjectData[i]->R_curr.x -
+	//1,TntObjectData[i]->R_curr.y + 1,DCC[TntObjectData[i]->MasterID]);
+	//	};
 };
 
 void uvsUnitType::UseOxigenResource(void)
@@ -9697,6 +10285,69 @@ void InsectList::Quant(void)
 	};
 };
 
+
+int ChargeFamily(VangerUnit *p, int family, int sign) {
+	StuffObject *n;
+	int c_log = 0;
+
+	n = p->DeviceData;
+	while (n) {
+		if (uvsItemTable[n->uvsDeviceType]->family == family) {
+			if (sign > 0) {
+				if (n->ActIntBuffer.data1 < uvsItemTable[n->uvsDeviceType]->param2) {
+					c_log = 1;
+					n->ActIntBuffer.data1 = uvsItemTable[n->uvsDeviceType]->param2;
+				};
+			} else {
+				if (n->ActIntBuffer.data1 > 0) {
+					c_log = 1;
+					n->ActIntBuffer.data1 = 0;
+				};
+			};
+		};
+		n = n->NextDeviceList;
+	};
+
+	if (p->Status & SOBJ_ACTIVE) {
+		if (sign) {
+			if (c_log) {
+				switch (family) {
+				case ItemFamily::Machotine:
+					aiMessageQueue.Send(
+						AI_MESSAGE_MACHOTINE,
+						p->Speed,
+						1,
+						0); // aiMessageData[AI_MESSAGE_MACHOTINE].Send(p->Speed,1,0);
+					SOUND_CHARGE_MACHOTIN();
+					break;
+				case ItemFamily::Ghorb:
+					aiMessageQueue.Send(
+						AI_MESSAGE_GHORB,
+						p->Speed,
+						2,
+						0); // aiMessageData[AI_MESSAGE_GHORB].Send(p->Speed,2,0);
+					SOUND_CHARGE_GHORB();
+					break;
+				};
+			};
+		} else {
+			if (c_log) {
+				switch (family) {
+				case ItemFamily::Ghorb:
+					aiMessageQueue.Send(
+						AI_MESSAGE_DGHORB,
+						p->Speed,
+						1,
+						0); // aiMessageData[AI_MESSAGE_DGHORB].Send(p->Speed,1,0);
+					SOUND_DISCHARGE();
+					break;
+				};
+			};
+		};
+	};
+	return c_log;
+}
+
 int ChargeWeapon(VangerUnit* p,int ind,int sign)
 {
 	StuffObject* n;
@@ -9816,15 +10467,15 @@ int ChargeDevice(VangerUnit* p,int ind,int sign)
 
 void GunSlot::OpenSlot(int slot,VangerUnit* own,int ind)
 {
-	ItemData = NULL;
-	pData = NULL;
 	Owner = own;
 	nSlot = slot;
-	Owner->lay_to_slot(nSlot,NULL);	
+	//Owner->clear_slot(slot);
 	StuffNetID = 0;
 	FireCount = 0;
 	NetFireCount = 0;
 	TableIndex = ind;
+
+	
 	if(NetworkON){
 		if(Owner->Status & SOBJ_ACTIVE){
 			NetID = CREATE_NET_ID(NID_SLOT);
@@ -9841,29 +10492,58 @@ void GunSlot::OpenSlot(int slot,VangerUnit* own,int ind)
 
 void GunSlot::CloseSlot(void)
 {
-	Owner->lay_to_slot(nSlot,NULL);
+	//Owner->clear_slot(nSlot);
 //	pData = NULL;
 	if(NetworkON && (Owner->Status & SOBJ_ACTIVE)){
 		NETWORK_OUT_STREAM.delete_object(NetID);
 		NETWORK_OUT_STREAM.end_body();
 	};
-};
+}
+
+void GunSlot::ShareInfo(GunSubSlot* with){
+	with->Owner = Owner;
+	with->OwnerSlot = this;
+	with->nSlot =nSlot;
+	with->RealSpeed = RealSpeed;
+}
+
+void GunSlot::ResetOffsets(){
+	if(!Slots.size()) return;
+
+	float SumOffset = 0;
+
+	for(GunSubSlot* SubSlot : Slots){
+		SumOffset -= SubSlot->MyModel->radius;
+	}
+	SumOffset /= 2;
+
+	for(int i = 0; i < Slots.size(); i++){
+		Slots[i]->XOffs = SumOffset;
+		SumOffset += Slots[i]->MyModel->radius;
+	}
+}
 
 void GunSlot::OpenGun(GunDevice* p)
 {
-	ItemData = p;
-	pData = ItemData->pData;
+	if (Slots.size()) {
+		//int delta = Owner->update_cords(nSlot);
+	}
+
+	GunSubSlot* newSlot = new GunSubSlot;
+	
+	ShareInfo(newSlot);
+	newSlot->MyOffs = Slots.size();
+	newSlot->open(p);
+
+	Slots.push_back(newSlot);
+
 	RealSpeed = 0;
-	Time = 0;
-	GunStatus = GUN_READY;
 	ControlFlag = 0;
 	TargetObject = NULL;
 	aiTargetObject = NULL;
-	Owner->lay_to_slot(nSlot,&ModelD.ActiveModel(p->ModelID));
-	ItemData->ActIntBuffer.slot = nSlot;
 	
-	StuffNetID = ItemData->NetDeviceID;
-	FireCount = 0;
+	StuffNetID = Slots[0]->ItemData->NetDeviceID;
+	FireCount = 0; 
 	NetFireCount = 0;
 
 	if(NetworkON && (Owner->Status & SOBJ_ACTIVE)){
@@ -9878,13 +10558,19 @@ void GunSlot::OpenGun(GunDevice* p)
 
 	if(Owner->Status & SOBJ_ACTIVE)
 		Owner->GetWeaponDelta();
+	
+	ResetOffsets();
 };
 
-void GunSlot::CloseGun(void)
+void GunSlot::CloseGun(int pos)
 {
-	ItemData->ActIntBuffer.slot = -1;
-	pData = NULL;
-	Owner->lay_to_slot(nSlot,NULL);
+	Slots[pos]->close();
+	delete Slots[pos];
+	Slots.erase(Slots.begin()+pos);
+
+	if(Slots.size()){
+		//int delta = Owner->update_cords(nSlot);
+	}
 
 	StuffNetID = 0;
 	FireCount = 0;
@@ -9902,10 +10588,13 @@ void GunSlot::CloseGun(void)
 			NETWORK_OUT_STREAM.end_body();
 		};
 	};
+
+	ResetOffsets();
 };
 
 void GunSlot::NetStuffQuant(void)
 {
+	/*
 	StuffObject* p;	
 	if(StuffNetID){
 		if(!pData){
@@ -9927,7 +10616,9 @@ void GunSlot::NetStuffQuant(void)
 				ControlFlag = 0;
 				TargetObject = NULL;
 				aiTargetObject = NULL;
-				Owner->lay_to_slot(nSlot,&ModelD.ActiveModel(p->ModelID));
+				MyModel[Slots.size()] = &ModelD.ActiveModel(p->ModelID);
+				Owner->lay_to_slot(nSlot,MyModel[Slots.size()], 0);
+				Slots.size()++;
 				ItemData->ActIntBuffer.slot = nSlot;
 				FireCount = NetFireCount;
 			};
@@ -9935,7 +10626,9 @@ void GunSlot::NetStuffQuant(void)
 			if(ItemData->NetDeviceID != StuffNetID){
 				ItemData->ActIntBuffer.slot = -1;
 				pData = NULL;
-				Owner->lay_to_slot(nSlot,NULL);	
+				Slots.size()--;
+				MyModel[Slots.size()] = &ModelD.ActiveModel(p->ModelID);
+				Owner->lay_to_slot(nSlot, MyModel[Slots.size()], 1);
 			}else{
 				if(FireCount < NetFireCount)
 					RemoteFire();
@@ -9945,14 +10638,18 @@ void GunSlot::NetStuffQuant(void)
 		if(pData){
 			ItemData->ActIntBuffer.slot = -1;
 			pData = NULL;
-			Owner->lay_to_slot(nSlot,NULL);	
+			Slots.size()--;
+			MyModel[Slots.size()] = &ModelD.ActiveModel(p->ModelID);
+			Owner->lay_to_slot(nSlot, MyModel[Slots.size()], 1);
 			FireCount = NetFireCount;
 		};
 	};
+	*/
 };
 
 void GunSlot::NetEvent(unsigned int time)
 {
+	/*
 	int t;
 	TargetObject = NULL;
 	NETWORK_IN_STREAM > StuffNetID;
@@ -9966,10 +10663,12 @@ void GunSlot::NetEvent(unsigned int time)
 		FireCount = NetFireCount;
 		aiTargetObject = NULL;
 	};
+	*/
 };
 
 void NetSlotEvent(int type,int id)
 {
+	/*
 	uchar ch;
 	int t;
 	VangerUnit* p;
@@ -9999,10 +10698,12 @@ void NetSlotEvent(int type,int id)
 			if(!n) NETWORK_IN_STREAM.ignore_event();
 		};
 	}else NETWORK_IN_STREAM.ignore_event();
+	*/
 };
 
 void GunSlot::NetUpdate(void)
 {	
+	/*
 	FireCount++;
 	NETWORK_OUT_STREAM.update_object(NetID,0,0);
 	NETWORK_OUT_STREAM < (int)(Owner->NetID);
@@ -10015,407 +10716,88 @@ void GunSlot::NetUpdate(void)
 		else NETWORK_OUT_STREAM < (int)(0);
 	};
 	NETWORK_OUT_STREAM.end_body();	
+	*/
 };
 
 void GunSlot::Fire(void)
 {
-	GeneralObject* p;
-	int mlen,len;
-	int dx,dy;
-	int rx,ry;
-	StuffObject* l;
-	
-	if(GunStatus != GUN_READY || Owner->BeebonationFlag || !(Owner->ExternalDraw)) return;	
+	for (int i = 0; i < Slots.size(); i++) {
+		if(!Slots[i]->pData) {
+			continue;
+		}
 
-	TargetObject = NULL;
-	switch(ItemData->ActIntBuffer.type){
-		case ACI_MACHOTINE_GUN_HEAVY:
-		case ACI_MACHOTINE_GUN_LIGHT:
-			if(ItemData->ActIntBuffer.data1 > 0){
-				GunStatus = GUN_FIRE;
-				ItemData->ActIntBuffer.data1--;
+		if (Slots[i]->GunStatus != GUN_READY || Owner->BeebonationFlag || !(Owner->ExternalDraw)){
+			continue;
+		}
 
-				if(NetworkON) NetUpdate();
-
-				if(ActD.Active)
-					SOUND_MACHOTINE_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
-			};
-			break;
-		case ACI_GHORB_GEAR_LIGHT:
-			if(ItemData->ActIntBuffer.data1 > 0){
-				GunStatus = GUN_FIRE;
-				ItemData->ActIntBuffer.data1--;
-				if(NetworkON) NetUpdate();
-				if(ActD.Active)
-					SOUND_GHORB_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
-			};			
-			break;
-		case ACI_GHORB_GEAR_HEAVY:
-			if(ItemData->ActIntBuffer.data1 > 0){
-				GunStatus = GUN_FIRE;
-				ItemData->ActIntBuffer.data1--;
-				if(NetworkON) NetUpdate();
-				if(ActD.Active)
-					SOUND_GHORB_BIG_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
-			};			
-			break;
-		case ACI_SPEETLE_SYSTEM_LIGHT:
-		case ACI_SPEETLE_SYSTEM_HEAVY:
-			if(ItemData->ActIntBuffer.data1 > 0){
-				if(ControlFlag){					
-					p = ActD.Tail;
-					mlen = -1;
-					rx = Owner->R_curr.x;
-					ry = Owner->R_curr.y;
-					while(p){
-						if(((BaseObject*)(p)) -> Visibility == VISIBLE && p != Owner){
-							dx = getDistX(p->R_curr.x,rx);
-							dy = getDistY(p->R_curr.y,ry);
-							len = dx*dx + dy*dy;
-							if(len < mlen || mlen == -1){
-								TargetObject = p;
-								mlen = len;
-							};
-						};
-						p = (Object*)(p->NextTypeList);
-					};
-				};
-				GunStatus = GUN_FIRE;
-				ItemData->ActIntBuffer.data1--;
-				if(NetworkON) NetUpdate();
-				if(ActD.Active)
-					SOUND_SPEETLE_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
-			}else{
-				l = GetStuffObject(Owner,ACI_SPEETLE_SYSTEM_AMMO1);
-				if(!l){
-					ControlFlag = 0;
-					l = GetStuffObject(Owner,ACI_SPEETLE_SYSTEM_AMMO0);
-				}else ControlFlag = 1;
-				if(l){
-					ObjectDestroy(l);
-					ItemData->ActIntBuffer.data1 = l->ActIntBuffer.data1;
-					if(Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE)) aciSendEvent2actint(ACI_DROP_ITEM,&(l->ActIntBuffer));
-					l->Storage->Deactive(l);
-					Owner->DelDevice(l);
-				};
-			};			
-			break;
-		case ACI_BEEBBANOZA_BLOCKADE:
-			if(Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE)){
-				if(aiGetHotBug() > 5){
-					aiPutHotBug(aiGetHotBug() - 5);
-					GunStatus = GUN_FIRE;
-					if(NetworkON){
-						NetUpdate();
-						my_player_body.beebos = aiGetHotBug();
-						send_player_body(my_player_body);
-					};
-					if(ActD.Active)
-						SOUND_BEEBBANOZA_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
-				};
-			}else{
-				GunStatus = GUN_FIRE;
-				if(ActD.Active)
-					SOUND_BEEBBANOZA_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
-			};			
-			break;
-		case ACI_CRUSTEST_CANNON:
-			if(ItemData->ActIntBuffer.data1 > 0){
-				GunStatus = GUN_FIRE;
-				ItemData->ActIntBuffer.data1--;
-				if(NetworkON) NetUpdate();
-				if(ActD.Active)
-					SOUND_CRUSTEST_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
-			}else{
-				l = GetStuffObject(Owner,ACI_CRUSTEST_CANNON_AMMO);
-				if(l){
-					ObjectDestroy(l);
-					ItemData->ActIntBuffer.data1 = l->ActIntBuffer.data1;
-					if(Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE)) aciSendEvent2actint(ACI_DROP_ITEM,&(l->ActIntBuffer));
-					l->Storage->Deactive(l);
-					Owner->DelDevice(l);
-				};
-			};			
-			break;
-		case ACI_TERMINATOR:
-			if(Owner->dynamic_state & (GROUND_COLLISION | WHEELS_TOUCH)){
-				p = ActD.Tail;
-				mlen = -1;
-				rx = Owner->R_curr.x;
-				ry = Owner->R_curr.y;
-				while(p){
-					if(((BaseObject*)(p)) -> Visibility == VISIBLE && p != Owner){
-						dx = getDistX(p->R_curr.x,rx);
-						dy = getDistY(p->R_curr.y,ry);
-						len = dx*dx + dy*dy;
-						if(len < mlen || mlen == -1){
-							TargetObject = p;
-							mlen = len;
-						};
-					};
-					p = (Object*)(p->NextTypeList);
-				};
-
-				GunStatus = GUN_FIRE;
-				ItemData->ActIntBuffer.data1--;
-				if(NetworkON) NetUpdate();
-				if(ActD.Active)
-					SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
-
-				if(ItemData->ActIntBuffer.data1 <= 0){
-					l = Owner->DeviceData;
-					while(l){
-						if(l->ActIntBuffer.type == ACI_TERMINATOR && l != ItemData)
-							break;
-						l = l->NextDeviceList;
-					};
-
-					if(l){
-						ObjectDestroy(l);
-						ItemData->ActIntBuffer.data0 = l->ActIntBuffer.data0;
-						ItemData->ActIntBuffer.data1 = l->ActIntBuffer.data1;
-						if(Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE)) aciSendEvent2actint(ACI_DROP_ITEM,&(l->ActIntBuffer));
-						l->Storage->Deactive(l);
-						Owner->DelDevice(l);
-					}else{
-						ObjectDestroy(ItemData);
-						if(Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE)) aciSendEvent2actint(ACI_DROP_ITEM,&(ItemData->ActIntBuffer));
-						ItemData->Storage->Deactive(ItemData);
-						Owner->DelDevice(ItemData);
-						CloseGun();
-					};
-				};
-			};
-			break;
-		case ACI_TERMINATOR2:
-			p = ActD.Tail;
-			mlen = -1;
-			rx = Owner->R_curr.x;
-			ry = Owner->R_curr.y;
-			while(p){
-				if(((BaseObject*)(p)) -> Visibility == VISIBLE && p != Owner){
-					dx = getDistX(p->R_curr.x,rx);
-					dy = getDistY(p->R_curr.y,ry);
-					len = dx*dx + dy*dy;
-					if(len < mlen || mlen == -1){
-						TargetObject = p;
-						mlen = len;
-					};
-				};
-				p = (Object*)(p->NextTypeList);
-			};
-			GunStatus = GUN_FIRE;
-			ItemData->ActIntBuffer.data1--;
-			if(NetworkON) NetUpdate();
-
-			if(ActD.Active)
-				SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
-
-			if(ItemData->ActIntBuffer.data1 <= 0){
-				l = Owner->DeviceData;
-				while(l){
-					if(l->ActIntBuffer.type == ACI_TERMINATOR2 && l != ItemData)
-						break;
-					l = l->NextDeviceList;
-				};
-
-				if(l){
-					ObjectDestroy(l);
-					ItemData->ActIntBuffer.data0 = l->ActIntBuffer.data0;
-					ItemData->ActIntBuffer.data1 = l->ActIntBuffer.data1;
-					if(Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE)) aciSendEvent2actint(ACI_DROP_ITEM,&(l->ActIntBuffer));
-					l->Storage->Deactive(l);
-					Owner->DelDevice(l);
-				}else{
-					ObjectDestroy(ItemData);
-					if(Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE)) aciSendEvent2actint(ACI_DROP_ITEM,&(ItemData->ActIntBuffer));
-					ItemData->Storage->Deactive(ItemData);
-					Owner->DelDevice(ItemData);
-					CloseGun();
-				};
-			};
-			break;
-		case ACI_EMPTY_AMPUTATOR:
-			if(ActD.Active)
-				SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));				
-			GunStatus = GUN_FIRE;
-			if(NetworkON) NetUpdate();
-			break;
-		case ACI_EMPTY_DEGRADATOR:
-			if(ActD.Active)
-				SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));				
-			GunStatus = GUN_FIRE;
-			if(NetworkON) NetUpdate();
-			break;
-		case ACI_EMPTY_MECHOSCOPE:			
-			if(ActD.Active)
-				SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));				
-			GunStatus = GUN_FIRE;
-			if(NetworkON) NetUpdate();
-			break;
-	};
+		Slots[i]->ControlFlag = ControlFlag;	
+		Slots[i]->TargetObject = 0;
+		Slots[i]->fire();
+		TargetObject = Slots[i]->TargetObject;
+	}
 };
 
 const int HYPNOTISE_WEAPON_RADIUS = 100;
 
 void GunSlot::RemoteFire(void)
 {
-	if(GunStatus != GUN_READY || Owner->BeebonationFlag || !(Owner->ExternalDraw)) return;
-	FireCount++;
-	TargetObject = NULL;
-	GunStatus = GUN_FIRE;
 
-	if(ActD.Active){
-		switch(ItemData->ActIntBuffer.type){
+	for (int i = 0; i < Slots.size(); i++) {
+		if (Slots[i]->GunStatus != GUN_READY || Owner->BeebonationFlag || !(Owner->ExternalDraw))
+			continue;
+		FireCount++;
+		TargetObject = NULL;
+		Slots[i]->GunStatus = GUN_FIRE;
+
+		if (ActD.Active) {
+			switch (Slots[i]->ItemData->ActIntBuffer.type) {
 			case ACI_MACHOTINE_GUN_HEAVY:
-			case ACI_MACHOTINE_GUN_LIGHT:			
-				SOUND_MACHOTINE_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
+			case ACI_MACHOTINE_GUN_LIGHT:
+				SOUND_MACHOTINE_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
 				break;
 			case ACI_GHORB_GEAR_LIGHT:
-			case ACI_GHORB_GEAR_HEAVY:			
-				SOUND_GHORB_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
+			case ACI_GHORB_GEAR_HEAVY:
+				SOUND_GHORB_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
 				break;
 			case ACI_SPEETLE_SYSTEM_LIGHT:
-			case ACI_SPEETLE_SYSTEM_HEAVY:			
-				SOUND_SPEETLE_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
+			case ACI_SPEETLE_SYSTEM_HEAVY:
+				SOUND_SPEETLE_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
 				break;
 			case ACI_BEEBBANOZA_BLOCKADE:
-				SOUND_BEEBBANOZA_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));			
+				SOUND_BEEBBANOZA_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
 				break;
 			case ACI_CRUSTEST_CANNON:
-				SOUND_CRUSTEST_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
+				SOUND_CRUSTEST_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
 				break;
 			case ACI_TERMINATOR2:
 			case ACI_TERMINATOR:
-				SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x,Owner->R_curr.x));
+				SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
 				break;
+			};
 		};
 	};
 };
 
 void GunSlot::Quant(void)
 {
-	BulletObject* b;
-	JumpBallObject* g;
-	int i;
-	Vector vCheck;
+	for (int i = 0; i < Slots.size(); i++) {
+		if(!Slots[i]->pData) {
+			continue;
+		}
 
-	switch(pData->BulletID){
-		case BULLET_TYPE_ID::HYPNOTISE:
-			if(GunStatus == GUN_FIRE){
-				ItemData->Time = pData->LifeTime;
-				if(Owner->Status & SOBJ_ACTIVE){
-					ActD.CheckDevice(ItemData);
-					Owner->CheckOutDevice(ItemData);
-					aciRemoveItem(&(ItemData->ActIntBuffer));
-//					aciSendEvent2actint(ACI_DROP_ITEM,&(ItemData->ActIntBuffer));
-				}else
-					Owner->CheckOutDevice(ItemData);
+		if (Slots[i]->GSFlags & GunSlotFlag::CLOSE_GUN) {
+			CloseGun(i);
+			continue;
+		}
+		//if(Slots[i].GSFlags[j] & GunSlotFlag::OPEN_GUN){
+		//	OpenGun(j);
+		//}
+		
+		Slots[i]->GSFlags = 0;
 
-				vCheck = Vector(HYPNOTISE_WEAPON_RADIUS,0,0)*Owner->MovMat;
-				vCheck += Owner->R_curr;
-				cycleTor(vCheck.x,vCheck.y);				
-				ItemData->DeviceOut(Owner->R_curr + Vector(0,0,Owner->radius*4),1,vCheck);
-				CloseGun();
-				GunStatus = GUN_READY;
-			};
-			break;
-		case BULLET_TYPE_ID::ROCKET:
-		case BULLET_TYPE_ID::FIREBALL:
-		case BULLET_TYPE_ID::TERMINATOR:
-			switch(GunStatus){
-				case GUN_FIRE:
-					if(Owner->Status & SOBJ_ACTIVE){
-						if(ActD.LocatorPoint)
-							TargetObject = ActD.LocatorPoint;
-					}else{
-						if(aiTargetObject)
-							TargetObject = aiTargetObject;
-						else 
-							TargetObject = NULL;
-					};
-					b = BulletD.CreateBullet();
-					Time = 0;
-					if(Owner->Speed > 0) RealSpeed = Owner->Speed;
-					else RealSpeed = 0;
-					mFire = Owner->RotMat;
-					vFire = Owner->R_curr;
-					if((1 << ItemData->ActIntBuffer.slot) & Owner->slots_existence) vFire += Owner->A_l2g*(Owner->R_slots[ItemData->ActIntBuffer.slot]*Owner->scale_real);
-					cycleTor(vFire.x,vFire.y);
-					b->Owner = Owner;
-					b->CreateBullet(this,pData);
-					GunStatus = GUN_WAIT;
-					break;
-				case GUN_WAIT:
-					Time++;
-					if(Time > pData->WaitTime) GunStatus = GUN_READY;
-					break;
-			};
-			break;
-		case BULLET_TYPE_ID::LASER:
-			switch(GunStatus){
-				case GUN_FIRE:
-					Time = 0;
-					if(Owner->Speed > 0) RealSpeed = Owner->Speed;
-					else RealSpeed = 0;
-					mFire = Owner->RotMat;
-					vFire = Owner->R_curr;
-					if((1 << ItemData->ActIntBuffer.slot) & Owner->slots_existence) vFire += Owner->A_l2g*(Owner->R_slots[ItemData->ActIntBuffer.slot]*Owner->scale_real);
-					cycleTor(vFire.x,vFire.y);
-					GunStatus = GUN_WAIT;
-					for(i = 0;i < pData->TapeSize;i++){
-						b = BulletD.CreateBullet();
-						b->Owner = Owner;
-						b->CreateBullet(this,pData);
-					};
-					break;
-				case GUN_WAIT:
-					Time++;
-					if(Time > pData->WaitTime) GunStatus = GUN_READY;
-					break;
-			};
-			break;
-		case BULLET_TYPE_ID::HORDE:
-			switch(GunStatus){
-				case GUN_FIRE:
-					Time = 0;
-					mFire = Owner->RotMat;
-					vFire = Owner->R_curr + Vector(0,0,Owner->radius*2);
-					cycleTor(vFire.x,vFire.y);
-					GunStatus = GUN_WAIT;
-					(HordeD.CreateHorde())->CreateHorde(vFire,20,240,400,Owner);
-					break;
-				case GUN_WAIT:
-					Time++;
-					if(Time > pData->WaitTime) GunStatus = GUN_READY;
-					break;
-			};
-			break;
-		case BULLET_TYPE_ID::JUMPBALL:
-			switch(GunStatus){
-				case GUN_FIRE:
-					Time = 0;
-					mFire = Owner->RotMat;
-					vFire = Owner->R_curr + Vector(0,0,Owner->radius*2);
-					cycleTor(vFire.x,vFire.y);
-					GunStatus = GUN_WAIT;
-					if(pData->TargetMode == BULLET_TARGET_MODE::CONTROL){
-						for(i = 0;i < pData->TapeSize;i++){
-							g = JumpD.CreateBall();
-							g->CreateBullet(this,pData);
-						};
-					}else{
-						g = JumpD.CreateBall();
-						g->CreateBullet(this,pData);					
-					};					
-					break;
-				case GUN_WAIT:
-					Time++;
-					if(Time > pData->WaitTime) GunStatus = GUN_READY;
-					break;
-			};
-			break;
-	};
+
+		Slots[i]->quant();
+	}
 };
 
 UnitItemMatrix* UnitMatrixData;
@@ -11018,14 +11400,14 @@ void VangerUnit::ResolveHandlerAttack(aiUnitResolve* p)
 		if(Visibility == VISIBLE || (p->Obj.VangerT)->Visibility == VISIBLE){
 			for(i = 0;i < ItemMatrix->NumSlot;i++){
 				s = &GunSlotData[ItemMatrix->nSlot[i]];
-				if(s->pData && s->GunStatus == GUN_READY && s->CheckTarget(p->Obj.VangerT))
+				if(s->Slots[0]->pData && s->Slots[0]->GunStatus == GUN_READY && s->CheckTarget(p->Obj.VangerT))
 					s->Fire();
 			};
 		}else{
 			for(i = 0;i < ItemMatrix->NumSlot;i++){
 				s = &GunSlotData[ItemMatrix->nSlot[i]];
-				if(s->pData)
-					p->Obj.VangerT->BulletCollision(s->pData->Power / s->pData->WaitTime,this);
+				if(s->Slots[0]->pData)
+					p->Obj.VangerT->BulletCollision(s->Slots[0]->pData->Power / s->Slots[0]->pData->WaitTime,this);
 			};
 		};
 	};
@@ -11414,26 +11796,32 @@ void VangerUnit::GetForceWay(int d2,Vector& v)
 
 int VangerUnit::CheckSpeetle(void)
 {
-	int i;
+	int i, j;
 	for(i = 0;i < ItemMatrix->NumSlot;i++){
-		if(GunSlotData[ItemMatrix->nSlot[i]].pData && (GunSlotData[ItemMatrix->nSlot[i]].ItemData->ActIntBuffer.type == ACI_SPEETLE_SYSTEM_LIGHT || GunSlotData[ItemMatrix->nSlot[i]].ItemData->ActIntBuffer.type == ACI_SPEETLE_SYSTEM_HEAVY))
-			return 1;
+
+		for (j = 0; j < GunSlotData[ItemMatrix->nSlot[i]].Slots.size(); j++) {
+			if ((GunSlotData[ItemMatrix->nSlot[i]].Slots[j]->ItemData->ActIntBuffer.type == ACI_SPEETLE_SYSTEM_LIGHT ||
+				 GunSlotData[ItemMatrix->nSlot[i]].Slots[j]->ItemData->ActIntBuffer.type == ACI_SPEETLE_SYSTEM_HEAVY))
+				return 1;
+		}
 	};
 	return 0;
 };
 
 void VangerUnit::CheckAmmo(void)
 {
-	int i;
+	int i, j;
 	int s1,s2;
 	s2 = s1 = 0;
 
 	for(i = 0;i < ItemMatrix->NumSlot;i++){
-		if(GunSlotData[ItemMatrix->nSlot[i]].pData){
-			if(!GunSlotData[ItemMatrix->nSlot[i]].ItemData->ActIntBuffer.data1)
-				s1++;
-			s2++;
-		};
+		for (j = 0; j < GunSlotData[ItemMatrix->nSlot[i]].Slots.size(); j++) {
+			if (GunSlotData[ItemMatrix->nSlot[i]].Slots[j]->pData) {
+				if (!GunSlotData[ItemMatrix->nSlot[i]].Slots[j]->ItemData->ActIntBuffer.data1)
+					s1++;
+				s2++;
+			};
+		}
 	};
 
 	if(s1 == s2)
@@ -11453,12 +11841,13 @@ void VangerUnit::WeaponGenerator(void)
 
 	for(i = 0;i < ItemMatrix->NumSlot;i++){
 		gs = &(GunSlotData[ItemMatrix->nSlot[i]]);
-		if(gs->pData)
-			gs->CloseGun();
+		if(gs->Slots.size()){
+			gs->CloseGun(0);
+		}
 	};
 
 	for(i = 0;i < ItemMatrix->NumSlot;i++){
-		if(!GunSlotData[ItemMatrix->nSlot[i]].pData){
+		if(!GunSlotData[ItemMatrix->nSlot[i]].Slots.size()){
 			s = ItemMatrix->SlotSize[i];
 			ms = 0;
 			mp = 0;
@@ -11560,53 +11949,8 @@ int VangerUnit::CheckNearTrack(void)
 
 int GunSlot::CheckTarget(ActionUnit* p)
 {
-	int d,v,a,l;
-	Vector vCheck,vStart,vEnd,vTan;	
-
-	if(pData->BulletMode & BULLET_CONTROL_MODE::SPEED) v = pData->Speed + Owner->Speed;
-	else v = pData->Speed;
-
-	d = v * pData->LifeTime;
-	vStart = Owner->R_curr;
-
-	aiTargetObject = NULL;
-
-	if(Owner->aiMoveFunction == AI_MOVE_FUNCTION_WHEEL && (Owner->PowerFlag & VANGER_POWER_FLY) && GetStuffObject(Owner,ACI_RADAR_DEVICE)){
-		if(pData->BulletMode & BULLET_CONTROL_MODE::AIM){
-			vEnd = p->R_curr;
-			vCheck = Vector(getDistX(vEnd.x,vStart.x),getDistY(vEnd.y,vStart.y),vEnd.z - vStart.z);
-			if(vCheck.abs2() > d*d) return 0;
-			if(!(pData->BulletMode & BULLET_CONTROL_MODE::FLY) && MapLineTrace(vStart,vEnd)) return 0;
-			aiTargetObject = p;
-		}else{
-			if(pData->BulletMode & BULLET_CONTROL_MODE::TARGET){	
-				vEnd = p->R_curr;				
-				vCheck = Vector(getDistX(vEnd.x,vStart.x),getDistY(vEnd.y,vStart.y),vEnd.z - vStart.z);
-				if(vCheck.abs2() > d*d) return 0;
-				vTan = Vector(vCheck.x,vCheck.y,0);
-				a = rPI(Owner->Angle - vTan.psi());
-				if(a > PI) a -= 2*PI;
-				if(abs(a) > PI/4) return 0;
-				if(!(pData->BulletMode & BULLET_CONTROL_MODE::FLY) && MapLineTrace(vStart,vEnd)) return 0;
-				aiTargetObject = p;
-			}else{
-				vEnd = Vector(d,0,0)*Owner->RotMat;
-				vEnd += Owner->R_curr;
-				cycleTor(vEnd.x,vEnd.y);				
-				if(!TouchSphere(vStart,vEnd,p->R_curr,p->radius,l)) return 0;
-				vTan = p->R_curr;
-				if(!(pData->BulletMode & BULLET_CONTROL_MODE::FLY) && MapLineTrace(vStart,vTan)) return 0;
-			};
-		};
-	}else{		
-		vEnd = Vector(d,0,0)*Owner->RotMat;
-		vEnd += Owner->R_curr;
-		cycleTor(vEnd.x,vEnd.y);
-		if(!TouchSphere(vStart,vEnd,p->R_curr,p->radius,l)) return 0;
-		vTan = p->R_curr;
-		if(!(pData->BulletMode & BULLET_CONTROL_MODE::FLY) && MapLineTrace(vStart,vTan)) return 0;
-	};
-	return 1;
+	Slots[0]->aiTargetObject = aiTargetObject;
+	return Slots[0]->checkTarget(p);
 };
 
 aiUnitEvent* VangerUnit::AddEvent(int id,GeneralObject* obj,VangerUnit* subj)
@@ -11681,15 +12025,17 @@ void VangerUnit::ClearEvent(GeneralObject* obj)
 
 int VangerUnit::GetAllert(VangerUnit* p)
 {
-	int i,s;
+	int i,s,j;
 	GunSlot* gs;
 	s = 0;
 
 	for(i = 0;i < p->ItemMatrix->NumSlot;i++){
 		gs = &(p->GunSlotData[p->ItemMatrix->nSlot[i]]);
-		if(gs->pData){
-			if(gs->pData->WaitTime) s += gs->pData->Power / gs->pData->WaitTime;
-			else s += gs->pData->Power;
+		for(j = 0;j < gs->Slots.size(); j++){
+			if(!gs->Slots[j]->pData) continue;
+
+			if(gs->Slots[j]->pData->WaitTime) s += gs->Slots[j]->pData->Power / gs->Slots[j]->pData->WaitTime;
+			else s += gs->Slots[j]->pData->Power;
 		};
 	};
 
@@ -11705,15 +12051,17 @@ int VangerUnit::GetAllert(VangerUnit* p)
 
 void VangerUnit::GetWeaponDelta(void)
 {
-	int i,s;
+	int i,s,j;
 	GunSlot* gs;
 	s = 0;
 
 	for(i = 0;i < ItemMatrix->NumSlot;i++){
 		gs = &(GunSlotData[ItemMatrix->nSlot[i]]);
-		if(gs->pData){
-			if(gs->pData->WaitTime) s += gs->pData->Power / gs->pData->WaitTime;
-			else s += gs->pData->Power;
+		for (j = 0; j < gs->Slots.size(); j++) {
+			if(!gs->Slots[j]->pData) continue;
+			if (gs->Slots[j]->pData->WaitTime)
+				s += gs->Slots[j]->pData->Power / gs->Slots[j]->pData->WaitTime;
+			else s += gs->Slots[j]->pData->Power;
 		};
 	};
 	WeaponDelta = s;
@@ -13362,6 +13710,10 @@ void VangerUnit::ShellNetEvent(int type,int id,int creator,int time,int x,int y,
 	unsigned char ch;
 	BulletObject* g;
 	Vector vCheck;
+	int RaffaID;
+	WorldBulletTemplate RaffaBullet;
+	bool WasShoot = 0;
+	Vector ShotPos;
 
 	switch(type){
 		case UPDATE_OBJECT:
@@ -13418,14 +13770,36 @@ void VangerUnit::ShellNetEvent(int type,int id,int creator,int time,int x,int y,
 
 			NetChanger = ch;
 			NETWORK_IN_STREAM > NetRuffaGunTime;
-			if(!(Status & SOBJ_WAIT_CONFIRMATION) && Visibility == VISIBLE && GetDistTime(NetGlobalTime,NetRuffaGunTime) < 5*256 && RuffaGunTime > (RUFFA_GUN_WAIT * WeaponWaitTime >> 8)){
+			RaffaID = GetRaffaID(ActD.Active->uvsPoint);
+			RaffaBullet = GameBulletData[WD_BULLET_RAFFA_START + RaffaID];
+			if (!(Status & SOBJ_WAIT_CONFIRMATION) && Visibility == VISIBLE &&
+				GetDistTime(NetGlobalTime, NetRuffaGunTime) < 5 * 256 &&
+				RuffaGunTime > (RaffaBullet.WaitTime * WeaponWaitTime >> 8)) {
 				RuffaGunTime = 0;
-				g = BulletD.CreateBullet();
-				vCheck = Vector(64,0,0)*RotMat;
-				g->CreateBullet(Vector(R_curr.x,R_curr.y,R_curr.z),
-					Vector(XCYCL(vCheck.x + R_curr.x),YCYCL(vCheck.y + R_curr.y),R_curr.z + vCheck.z),NULL,&GameBulletData[WD_BULLET_RUFFA],this,Speed);
-				if(ActD.Active)
-					SOUND_MACHOTINE_SHOT(getDistX(ActD.Active->R_curr.x,R_curr.x));
+				WasShoot = 0;
+				for (int i = 0; i < MAX_SLOTS; i++) {
+					// null slot vector
+					if (!(R_slots[i].x && R_slots[i].y && R_slots[i].z))
+						continue;
+					WasShoot = 1;
+					g = BulletD.CreateBullet();
+					vCheck = Vector(64, 0, 0) * RotMat;
+					ShotPos = R_curr;
+					ShotPos += A_l2g * (R_slots[i] * scale_real);
+
+					g->CreateBullet(
+						ShotPos,
+						Vector(
+							XCYCL(vCheck.x + ShotPos.x),
+							YCYCL(vCheck.y + ShotPos.y),
+							ShotPos.z + vCheck.z),
+						NULL,
+						&RaffaBullet,
+						this,
+						Speed);
+				}
+				if (ActD.Active && WasShoot)
+					SOUND_RAFFA_SHOT(getDistX(ActD.Active->R_curr.x, R_curr.x));
 			};
 			NETWORK_IN_STREAM > NetProtractorFunctionTime;
 			NETWORK_IN_STREAM > NetMessiahFunctionTime;
@@ -13885,7 +14259,7 @@ void aciPrepareMenus(void);
 void VangerUnit::ChangeVangerProcess(void)
 {
 	uvsMechosType* sc;
-	int i;
+	int i,j;
 	StuffObject* p;
 	StuffObject* pp;
 
@@ -13957,6 +14331,7 @@ void VangerUnit::ChangeVangerProcess(void)
 		Armor = VangerChangerArmor;
 	};
 
+	/*
 	switch(uvsPoint->Pmechos->type){
 		case 0:
 		case 1:
@@ -13996,7 +14371,8 @@ void VangerUnit::ChangeVangerProcess(void)
 		case 23://Worm
 			ItemMatrix = &UnitMatrixData[28];
 			break;
-	};
+	};*/
+	ItemMatrix = &UnitMatrixData[uvsMechosTable[uvsPoint->Pmechos->type]->UnitMatrixID];
 
 	if(Status & SOBJ_ACTIVE){
 		aciNewMechos(uvsMechosType_to_AciInt(uvsPoint->Pmechos->type));
@@ -14120,7 +14496,9 @@ void VangerUnit::ChangeVangerProcess(void)
 	for(i = 0;i < ItemMatrix->FullNum;i++) ItemMatrixData[i] = 0;
 
 	for(i = 0;i < MAX_ACTIVE_SLOT;i++){
-		GunSlotData[i].pData = NULL;
+		for (j = 0; i < GunSlotData[i].Slots.size(); j++) {
+			GunSlotData[i].Slots[j]->pData = NULL;
+		}
 		GunSlotData[i].Owner = NULL;
 	};
 
@@ -14329,3 +14707,501 @@ void GetNetworkGameTime(int& day,int& hour,int& min,int& sec)
 	hour = (t / (60*60)) % 12;
 	day = (t / (60*60*12)) % 30;
 };
+
+void GunSubSlot::clear() {
+	ItemData = 0;
+	pData = 0;
+	MyModel = 0;
+	GunStatus = GUN_WAIT;
+	Time = 0;
+}
+
+void GunSubSlot::open(GunDevice *p) {
+	clear();
+	ItemData = p;
+	pData = ItemData->pData;
+	MyModel = &ModelD.ActiveModel(p->ModelID);
+	ItemData->ActIntBuffer.slot = nSlot;
+	ItemData->ActIntBuffer.subslot = MyOffs;
+}
+
+void GunSubSlot::close() {
+	ItemData->ActIntBuffer.slot = ItemData->ActIntBuffer.subslot = -1;
+	//if (!MyModel) {
+	//	RVERR("Attempt to take up a weapon without model", "\0");
+	//}
+	clear();
+}
+
+void GunSubSlot::fire() {
+	GeneralObject *p;
+	int mlen, len;
+	int dx, dy;
+	int rx, ry;
+	StuffObject *l;
+
+	switch (ItemData->ActIntBuffer.type) {
+	case ACI_MACHOTINE_GUN_HEAVY:
+	case ACI_MACHOTINE_GUN_LIGHT:
+		if (ItemData->ActIntBuffer.data1 > 0) {
+			GunStatus = GUN_FIRE;
+			ItemData->ActIntBuffer.data1--;
+
+			if (NetworkON)
+				NetUpdate();
+
+			if (ActD.Active)
+				SOUND_MACHOTINE_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+		};
+		break;
+	case ACI_GHORB_GEAR_LIGHT:
+		if (ItemData->ActIntBuffer.data1 > 0) {
+			GunStatus = GUN_FIRE;
+			ItemData->ActIntBuffer.data1--;
+			if (NetworkON)
+				NetUpdate();
+			if (ActD.Active)
+				SOUND_GHORB_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+		};
+		break;
+	case ACI_GHORB_GEAR_HEAVY:
+		if (ItemData->ActIntBuffer.data1 > 0) {
+			GunStatus = GUN_FIRE;
+			ItemData->ActIntBuffer.data1--;
+			if (NetworkON)
+				NetUpdate();
+			if (ActD.Active)
+				SOUND_GHORB_BIG_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+		};
+		break;
+	case ACI_SPEETLE_SYSTEM_LIGHT:
+	case ACI_SPEETLE_SYSTEM_HEAVY:
+		if (ItemData->ActIntBuffer.data1 > 0) {
+			if (ControlFlag) {
+				p = ActD.Tail;
+				mlen = -1;
+				rx = Owner->R_curr.x;
+				ry = Owner->R_curr.y;
+				while (p) {
+					if (((BaseObject *)(p))->Visibility == VISIBLE && p != Owner) {
+						dx = getDistX(p->R_curr.x, rx);
+						dy = getDistY(p->R_curr.y, ry);
+						len = dx * dx + dy * dy;
+						if (len < mlen || mlen == -1) {
+							TargetObject = p;
+							mlen = len;
+						};
+					};
+					p = (Object *)(p->NextTypeList);
+				};
+			};
+			GunStatus = GUN_FIRE;
+			ItemData->ActIntBuffer.data1--;
+			if (NetworkON)
+				NetUpdate();
+			if (ActD.Active)
+				SOUND_SPEETLE_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+		} else {
+			l = GetStuffObject(Owner, ACI_SPEETLE_SYSTEM_AMMO1);
+			if (!l) {
+				ControlFlag = 0;
+				l = GetStuffObject(Owner, ACI_SPEETLE_SYSTEM_AMMO0);
+			} else
+				ControlFlag = 1;
+			if (l) {
+				ObjectDestroy(l);
+				ItemData->ActIntBuffer.data1 = l->ActIntBuffer.data1;
+				
+				if (Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE))
+					aciSendEvent2actint(ACI_DROP_ITEM, &(l->ActIntBuffer));
+				l->Storage->Deactive(l);
+				Owner->DelDevice(l);
+			};
+		};
+		break;
+	case ACI_BEEBBANOZA_BLOCKADE:
+		if (Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE)) {
+			if (aiGetHotBug() > 5) {
+				aiPutHotBug(aiGetHotBug() - 5);
+				GunStatus = GUN_FIRE;
+				if (NetworkON) {
+					NetUpdate();
+					my_player_body.beebos = aiGetHotBug();
+					send_player_body(my_player_body);
+				};
+				if (ActD.Active)
+					SOUND_BEEBBANOZA_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+			};
+		} else {
+			GunStatus = GUN_FIRE;
+			if (ActD.Active)
+				SOUND_BEEBBANOZA_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+		};
+		break;
+	case ACI_CRUSTEST_CANNON:
+		if (ItemData->ActIntBuffer.data1 > 0) {
+			GunStatus = GUN_FIRE;
+			ItemData->ActIntBuffer.data1--;
+			if (NetworkON)
+				NetUpdate();
+			if (ActD.Active)
+				SOUND_CRUSTEST_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+		} else {
+			l = GetStuffObject(Owner, ACI_CRUSTEST_CANNON_AMMO);
+			if (l) {
+				ObjectDestroy(l);
+				ItemData->ActIntBuffer.data1 = l->ActIntBuffer.data1;
+				if (Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE))
+					aciSendEvent2actint(ACI_DROP_ITEM, &(l->ActIntBuffer));
+				l->Storage->Deactive(l);
+				Owner->DelDevice(l);
+			};
+		};
+		break;
+	case ACI_TERMINATOR:
+		if (Owner->dynamic_state & (GROUND_COLLISION | WHEELS_TOUCH)) {
+			p = ActD.Tail;
+			mlen = -1;
+			rx = Owner->R_curr.x;
+			ry = Owner->R_curr.y;
+			while (p) {
+				if (((BaseObject *)(p))->Visibility == VISIBLE && p != Owner) {
+					dx = getDistX(p->R_curr.x, rx);
+					dy = getDistY(p->R_curr.y, ry);
+					len = dx * dx + dy * dy;
+					if (len < mlen || mlen == -1) {
+						TargetObject = p;
+						mlen = len;
+					};
+				};
+				p = (Object *)(p->NextTypeList);
+			};
+
+			GunStatus = GUN_FIRE;
+			ItemData->ActIntBuffer.data1--;
+			if (NetworkON)
+				NetUpdate();
+			if (ActD.Active)
+				SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+
+			if (ItemData->ActIntBuffer.data1 <= 0) {
+				l = Owner->DeviceData;
+				while (l) {
+					if (l->ActIntBuffer.type == ACI_TERMINATOR && l != ItemData)
+						break;
+					l = l->NextDeviceList;
+				};
+
+				if (l) {
+					ObjectDestroy(l);
+					ItemData->ActIntBuffer.data0 = l->ActIntBuffer.data0;
+					ItemData->ActIntBuffer.data1 = l->ActIntBuffer.data1;
+					if (Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE))
+						aciSendEvent2actint(ACI_DROP_ITEM, &(l->ActIntBuffer));
+					l->Storage->Deactive(l);
+					Owner->DelDevice(l);
+				} else {
+					ObjectDestroy(ItemData);
+					if (Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE))
+						aciSendEvent2actint(ACI_DROP_ITEM, &(ItemData->ActIntBuffer));
+					ItemData->Storage->Deactive(ItemData);
+					Owner->DelDevice(ItemData);
+					GSFlags |= GunSlotFlag::CLOSE_GUN;
+				};
+			};
+		};
+		break;
+	case ACI_TERMINATOR2:
+		p = ActD.Tail;
+		mlen = -1;
+		rx = Owner->R_curr.x;
+		ry = Owner->R_curr.y;
+		while (p) {
+			if (((BaseObject *)(p))->Visibility == VISIBLE && p != Owner) {
+				dx = getDistX(p->R_curr.x, rx);
+				dy = getDistY(p->R_curr.y, ry);
+				len = dx * dx + dy * dy;
+				if (len < mlen || mlen == -1) {
+					TargetObject = p;
+					mlen = len;
+				};
+			};
+			p = (Object *)(p->NextTypeList);
+		};
+		GunStatus = GUN_FIRE;
+		ItemData->ActIntBuffer.data1--;
+		if (NetworkON)
+			NetUpdate();
+
+		if (ActD.Active)
+			SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+
+		if (ItemData->ActIntBuffer.data1 <= 0) {
+			l = Owner->DeviceData;
+			while (l) {
+				if (l->ActIntBuffer.type == ACI_TERMINATOR2 && l != ItemData)
+					break;
+				l = l->NextDeviceList;
+			};
+
+			if (l) {
+				ObjectDestroy(l);
+				ItemData->ActIntBuffer.data0 = l->ActIntBuffer.data0;
+				ItemData->ActIntBuffer.data1 = l->ActIntBuffer.data1;
+				if (Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE))
+					aciSendEvent2actint(ACI_DROP_ITEM, &(l->ActIntBuffer));
+				l->Storage->Deactive(l);
+				Owner->DelDevice(l);
+			} else {
+				ObjectDestroy(ItemData);
+				if (Owner->ID == ID_VANGER && (Owner->Status & SOBJ_ACTIVE))
+					aciSendEvent2actint(ACI_DROP_ITEM, &(ItemData->ActIntBuffer));
+				ItemData->Storage->Deactive(ItemData);
+				Owner->DelDevice(ItemData);
+				GSFlags |= GunSlotFlag::CLOSE_GUN;
+			};
+		};
+		break;
+	case ACI_EMPTY_AMPUTATOR:
+		if (ActD.Active)
+			SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+		GunStatus = GUN_FIRE;
+		if (NetworkON)
+			NetUpdate();
+		break;
+	case ACI_EMPTY_DEGRADATOR:
+		if (ActD.Active)
+			SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+		GunStatus = GUN_FIRE;
+		if (NetworkON)
+			NetUpdate();
+		break;
+	case ACI_EMPTY_MECHOSCOPE:
+		if (ActD.Active)
+			SOUND_TERMINATOR_SHOT(getDistX(ActD.Active->R_curr.x, Owner->R_curr.x));
+		GunStatus = GUN_FIRE;
+		if (NetworkON)
+			NetUpdate();
+		break;
+	};
+}
+
+void GunSubSlot::typedFire()
+{
+switch (pData->BulletID) {
+	case BULLET_TYPE_ID::HYPNOTISE:
+		hypnoFire();
+		break;
+	case BULLET_TYPE_ID::ROCKET:
+	case BULLET_TYPE_ID::FIREBALL:
+	case BULLET_TYPE_ID::TERMINATOR:
+		fireballFire();
+		break;
+	case BULLET_TYPE_ID::LASER:
+		laserFire();
+		break;
+	case BULLET_TYPE_ID::HORDE:
+		hordeFire();
+		break;
+	case BULLET_TYPE_ID::JUMPBALL:
+		jumpballFire();
+		break;
+	};
+}
+
+void GunSubSlot::quant() {
+	if (!pData){
+		return;
+	}
+
+	if(MyModel){
+		SubRenderReq* req = new SubRenderReq;
+		req->type = SubRenderReq::Weapon;
+		req->object = MyModel;
+		req->data = nSlot;
+		req->offs.x += XOffs;
+
+		Owner->render_reqs.push_back(req);
+	}
+	
+	switch(GunStatus){
+	case GUN_FIRE:
+		typedFire();
+		Time = 0;
+		GunStatus = GUN_WAIT;
+		break;
+	case GUN_WAIT:
+		Time++;
+		if(Time > pData->WaitTime){
+		
+			GunStatus = GUN_READY;
+		}
+		break;
+	}
+	
+}
+
+void GunSubSlot::getFirePos(){
+	vFire = Owner->R_curr;
+	if ((1 << ItemData->ActIntBuffer.slot) & Owner->slots_existence)
+		vFire +=Owner->A_l2g * ((Owner->R_slots[ItemData->ActIntBuffer.slot] + Vector(XOffs, 0, 0)) * Owner->scale_real);
+	cycleTor(vFire.x, vFire.y);
+}
+
+void GunSubSlot::hypnoFire() {
+	Vector vCheck;
+
+	ItemData->Time = pData->LifeTime;
+	if (Owner->Status & SOBJ_ACTIVE) {
+		ActD.CheckDevice(ItemData);
+		Owner->CheckOutDevice(ItemData);
+		aciRemoveItem(&(ItemData->ActIntBuffer));
+		//					aciSendEvent2actint(ACI_DROP_ITEM,&(ItemData->ActIntBuffer));
+	} else
+		Owner->CheckOutDevice(ItemData);
+
+	vCheck = Vector(HYPNOTISE_WEAPON_RADIUS, 0, 0) * Owner->MovMat;
+	vCheck += Owner->R_curr;
+	cycleTor(vCheck.x, vCheck.y);
+	ItemData->DeviceOut(Owner->R_curr + Vector(0, 0, Owner->radius * 4), 1, vCheck);
+	GSFlags |= GunSlotFlag::CLOSE_GUN;
+	
+}
+
+void GunSubSlot::fireballFire() {
+	BulletObject *b;
+
+	if (Owner->Status & SOBJ_ACTIVE) {
+		if (ActD.LocatorPoint)
+			TargetObject = ActD.LocatorPoint;
+	} else {
+		if (aiTargetObject)
+			TargetObject = aiTargetObject;
+		else
+			TargetObject = NULL;
+	};
+	b = BulletD.CreateBullet();
+	if (Owner->Speed > 0)
+		RealSpeed = Owner->Speed;
+	else
+		RealSpeed = 0;
+	mFire = Owner->RotMat;
+	getFirePos();
+	b->Owner = Owner;
+	b->CreateBullet(OwnerSlot, pData, vFire, mFire);
+	
+}
+
+void GunSubSlot::laserFire() {
+	BulletObject *b;
+	int j;
+
+	if (Owner->Speed > 0)
+		RealSpeed = Owner->Speed;
+	else
+		RealSpeed = 0;
+	mFire = Owner->RotMat;
+	getFirePos();
+	for (j = 0; j < pData->TapeSize; j++) {
+		b = BulletD.CreateBullet();
+		b->Owner = Owner;
+		b->CreateBullet(OwnerSlot, pData, vFire, mFire);
+	};
+		
+}
+
+void GunSubSlot::hordeFire() {
+
+	mFire = Owner->RotMat;
+	getFirePos();
+	(HordeD.CreateHorde())->CreateHorde(vFire, 20, 240, 400, Owner);
+}
+
+
+void GunSubSlot::jumpballFire() {
+	JumpBallObject *g;
+	int j;
+
+	mFire = Owner->RotMat;
+	getFirePos();
+	GunStatus = GUN_WAIT;
+	if (pData->TargetMode == BULLET_TARGET_MODE::CONTROL) {
+		for (j = 0; j < pData->TapeSize; j++) {
+			g = JumpD.CreateBall();
+			g->CreateBullet(OwnerSlot, pData, vFire, mFire);
+		};
+	} else {
+		g = JumpD.CreateBall();
+		g->CreateBullet(OwnerSlot, pData, vFire, mFire);
+	};
+
+}
+
+int GunSubSlot::checkTarget(ActionUnit *p) {
+	int d, v, a, l;
+	Vector vCheck, vStart, vEnd, vTan;
+
+	if (pData->BulletMode & BULLET_CONTROL_MODE::SPEED)
+		v = pData->Speed + Owner->Speed;
+	else
+		v = pData->Speed;
+
+	d = v * pData->LifeTime;
+	vStart = Owner->R_curr;
+
+	aiTargetObject = NULL;
+
+	if (Owner->aiMoveFunction == AI_MOVE_FUNCTION_WHEEL &&
+		(Owner->PowerFlag & VANGER_POWER_FLY) && GetStuffObject(Owner, ACI_RADAR_DEVICE)) {
+		if (pData->BulletMode & BULLET_CONTROL_MODE::AIM) {
+			vEnd = p->R_curr;
+			vCheck = Vector(
+				getDistX(vEnd.x, vStart.x), getDistY(vEnd.y, vStart.y), vEnd.z - vStart.z);
+			if (vCheck.abs2() > d * d)
+				return 0;
+			if (!(pData->BulletMode & BULLET_CONTROL_MODE::FLY) &&
+				MapLineTrace(vStart, vEnd))
+				return 0;
+			aiTargetObject = p;
+		} else {
+			if (pData->BulletMode & BULLET_CONTROL_MODE::TARGET) {
+				vEnd = p->R_curr;
+				vCheck = Vector(
+					getDistX(vEnd.x, vStart.x), getDistY(vEnd.y, vStart.y), vEnd.z - vStart.z);
+				if (vCheck.abs2() > d * d)
+					return 0;
+				vTan = Vector(vCheck.x, vCheck.y, 0);
+				a = rPI(Owner->Angle - vTan.psi());
+				if (a > PI)
+					a -= 2 * PI;
+				if (abs(a) > PI / 4)
+					return 0;
+				if (!(pData->BulletMode & BULLET_CONTROL_MODE::FLY) &&
+					MapLineTrace(vStart, vEnd))
+					return 0;
+				aiTargetObject = p;
+			} else {
+				vEnd = Vector(d, 0, 0) * Owner->RotMat;
+				vEnd += Owner->R_curr;
+				cycleTor(vEnd.x, vEnd.y);
+				if (!TouchSphere(vStart, vEnd, p->R_curr, p->radius, l))
+					return 0;
+				vTan = p->R_curr;
+				if (!(pData->BulletMode & BULLET_CONTROL_MODE::FLY) &&
+					MapLineTrace(vStart, vTan))
+					return 0;
+			};
+		};
+	} else {
+		vEnd = Vector(d, 0, 0) * Owner->RotMat;
+		vEnd += Owner->R_curr;
+		cycleTor(vEnd.x, vEnd.y);
+		if (!TouchSphere(vStart, vEnd, p->R_curr, p->radius, l))
+			return 0;
+		vTan = p->R_curr;
+		if (!(pData->BulletMode & BULLET_CONTROL_MODE::FLY) && MapLineTrace(vStart, vTan))
+			return 0;
+	};
+	
+	return 1;
+}

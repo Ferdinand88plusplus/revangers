@@ -851,3 +851,38 @@ char* win32_findnext()
 		return 0;
 }
 #endif
+
+// Revangers::fTools
+namespace ft {
+const double fPI = 3.14159265359;
+
+float rad2Deg(float rads) {
+	return rads * 180 / fPI;
+}
+
+float deg2Rad(float degs) {
+	return degs * fPI / 180;
+}
+
+DBV stepVec(const DBV &vec, float angle, float distance) {
+	float x = vec.x + distance * cos(deg2Rad(angle));
+	float y = vec.y + distance * sin(deg2Rad(angle));
+
+	return DBV(x, y, vec.z);
+}
+float distVec(const DBV &beg, const DBV &end) {
+	float x = end.x - beg.x;
+	float y = end.y - beg.y;
+	float z = end.z - beg.z;
+
+	x *= x;
+	y *= y;
+	z *= z;
+
+	return sqrt(x + y + z);
+}
+float vecAng(const DBV &beg, const DBV &end) {
+	return rad2Deg(atan2(end.y - beg.y, end.x - beg.x));
+}
+
+} // namespace ft

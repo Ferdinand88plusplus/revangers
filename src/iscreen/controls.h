@@ -46,11 +46,14 @@ enum iControlID {
 
 	iKEY_SCREENSHOT,			// 37
 
+	iKEY_CMD,			// 38
+
 	iKEY_MAX_ID
 };
 
 int iGetKeyID(int key);
 int iKeyPressed(int id);
+int iKeyPressedOnce(int id);
 int iCheckKeyID(int id,int key);
 
 void iInitControls(void);

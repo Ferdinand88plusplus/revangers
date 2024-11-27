@@ -240,6 +240,11 @@ void EffectDispatcher::Init(Parser& in)
 				case EFF_PARTICLE07:
 					UnitData[k] = new ParticleObject;
 					((ParticleObject*)(UnitData[k]))->InitParicle(PARTICLE_SIZE07);
+					break;
+				case EFF_PARTICLE08:
+					UnitData[k] = new ParticleObject;
+					((ParticleObject *)(UnitData[k]))->InitParicle(PARTICLE_SIZE08);
+					break;
 			};
 			UnitData[k]->Init(&UnitStorage[i]);
 			UnitStorage[i].Deactive(UnitData[k]);

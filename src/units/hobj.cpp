@@ -2528,6 +2528,16 @@ void GeneralTableOpen(void)
 			};
 		};
 
+#ifdef SAVE_GENERATED_PALS
+		XStream palOut("FireColorTable.pal", XS_OUT);
+		for (int i = 0; i < 256; i++) {
+			for (int j = 0; j < 3; j++) {
+				palOut < FireColorTable[j+(i >> 8) ];
+			}
+		}
+		palOut.close();
+#endif
+
 		for(i  = 0;i < 256;i++)
 			ShadowColorTable[i] = 0;
 
@@ -2634,7 +2644,7 @@ void ChangeVanger(void) //zNfo
 extern int camera_X_prev;
 extern int camera_Y_prev;
 
-void ChangeWorld(int world,int flag)
+void ChangeWorld(int world,int flag, bool fast)
 {
 	int t,i;
 	if(CurrentWorld == WORLD_KHOX)
@@ -2643,29 +2653,33 @@ void ChangeWorld(int world,int flag)
 	GeneralSystemClose();
 	CloseCyclicPal();
 
-	PassageBmpPrev = -1;
-	t = RND(PassageBmpNum);
-	if(PassageImageData[t].xSize != XGR_MAXX){
-		for(i = t;i < PassageBmpNum;i++){
-			if(PassageImageData[i].xSize == XGR_MAXX){
-				PassageBmpPrev = i;
-				break;
-			};
-		};
-
-		if(PassageBmpPrev == -1){
-			for(i = 0;i < PassageBmpNum;i++){
-				if(PassageImageData[i].xSize == XGR_MAXX){
+	if (!fast) {
+		PassageBmpPrev = -1;
+		t = RND(PassageBmpNum);
+		if (PassageImageData[t].xSize != XGR_MAXX) {
+			for (i = t; i < PassageBmpNum; i++) {
+				if (PassageImageData[i].xSize == XGR_MAXX) {
 					PassageBmpPrev = i;
 					break;
 				};
 			};
-		};
-	}else PassageBmpPrev = t;
 
-	XGR_MouseHide();
+			if (PassageBmpPrev == -1) {
+				for (i = 0; i < PassageBmpNum; i++) {
+					if (PassageImageData[i].xSize == XGR_MAXX) {
+						PassageBmpPrev = i;
+						break;
+					};
+				};
+			};
+		} else
+			PassageBmpPrev = t;
 
-	if(PassageBmpPrev >= 0) PassageImageData[PassageBmpPrev].Show();
+		XGR_MouseHide();
+
+		if (PassageBmpPrev >= 0)
+			PassageImageData[PassageBmpPrev].Show();
+	}
 
 	CurrentWorld = world;
 
@@ -2694,10 +2708,13 @@ void ChangeWorld(int world,int flag)
 
 	if(world == WORLD_KHOX) //znfo - items sizing
 		scale_general /= 2.; 
+	if (!fast) {
+		if (PassageBmpPrev >= 0)
+			PassageImageData[PassageBmpPrev].Hide();
+		XGR_MouseShow();
+		memset(palbuf, 0, 768);
 
-	if(PassageBmpPrev >= 0) PassageImageData[PassageBmpPrev].Hide();
-	XGR_MouseShow();
-	memset(palbuf,0,768);
+	}
 //	XGR_SetPal(palbufOrg,0,255);
 
 #ifdef ACTINT

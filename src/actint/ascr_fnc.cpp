@@ -50,12 +50,19 @@
 #include "aci_scr.h"
 #include "chtree.h"
 
+#include "../3d/parser.h"
+
 #if defined(__APPLE__) || __GNUC__ < 9
 #else
 namespace fs = std::filesystem;
 #endif
 
 /* ----------------------------- STRUCT SECTION ----------------------------- */
+
+struct fixedStr;
+struct ParserPP;
+struct ItemAciParser;
+
 /* ----------------------------- EXTERN SECTION ----------------------------- */
 
 #ifdef _DEMO_
@@ -254,8 +261,13 @@ void free_cell_frame(void);
 void swap_buf_col(int src,int dest,int sx,int sy,unsigned char* buf);
 void mem_putspr(int x,int y,int sx,int sy,int bsx,int bsy,unsigned char* src,unsigned char* dest);
 void mem_rectangle(int x,int y,int sx,int sy,int bsx,int col_in,int col_out,int mode,void* buf);
-void aParseScript(const char* fname,const char* bname = NULL);
-void acsParseScript(const char* fname,const char* bname = NULL);
+#ifdef GENERATE_ITEMS_ACI
+void aParseScript(const char *fname, const char *bname = NULL, bool subWrite = 0);
+void saveItemsAci(void);
+#else
+void aParseScript(const char *fname, const char *bname = NULL);
+#endif
+void acsParseScript(const char *fname, const char *bname = NULL);
 
 void aciChangeWorld(int w_id);
 void aciInitWorldIDs(void);
@@ -537,6 +549,421 @@ int aciPhraseStrLen = 0;
 int aciPhraseNumStr = 0;
 #endif
 
+// Just a char* string with known size.
+struct fixedStr {
+	int Size = 0;
+	char *Data = 0;
+
+	void alloc() {
+		Data = new char[Size + 1];
+		Data[Size] = 0;
+	}
+
+	void alloc(char *buf) {
+		Data = new char[Size + 1];
+		memcpy(Data, buf, Size);
+		Data[Size] = 0;
+	}
+
+	void move_buf(char **to) {
+		*to = new char[Size + 1];
+		(*to)[Size] = 0;
+		memcpy(*to, Data, Size);
+
+		delete[] Data;
+		Size = 0;
+	}
+
+	void copy_buf(char **to, bool allocdst) {
+		if(allocdst)
+			*to = new char[Size + 1];
+		(*to)[Size] = 0;
+		memcpy(*to, Data, Size);
+	}
+
+	~fixedStr() {
+		if (Size)
+			delete[] Data;
+	}
+};
+
+struct ParserPP: Parser {
+	fixedStr *copy_name() {
+		fixedStr *str = new fixedStr;
+
+		char c;
+		uint i, start;
+		do {
+			if (tell() >= length())
+				return 0;
+			*this > c;
+		} while (iswspace(c));
+		if (c == '"') {
+			start = offset;
+			for (i = ++offset; i < length(); i++) {
+				if ((c = buf[i]) == '"' || (iswspace(c) && c != ' ' && c != '\t')) {
+					// buf[i] = 0;
+					break;
+				}
+			}
+			str->Size = i - start;
+			str->alloc(buf + start);
+		} else {
+			start = offset - 1;
+			for (i = offset; i < length(); i++) {
+				if (iswspace(buf[i])) {
+					// buf[i] = 0;
+					break;
+				}
+			}
+			str->Size = i - start;
+			str->alloc(buf + start);
+		}
+		// if(!str->Size) ErrH.Abort("Null-size word...", 1, offset);
+		set(++i < length() ? i : length());
+		return str;
+	}
+
+	void skip_name() {
+		char c;
+
+		do {
+			if (tell() >= length())
+				return;
+			*this > c;
+		} while (iswspace(c));
+		int i;
+		if (c == '"')
+			for (i = ++offset; i < length(); i++) {
+				if ((c = buf[i]) == '"' || (iswspace(c) && c != ' ' && c != '\t')) {
+					// buf[i] = 0;
+					break;
+				}
+			}
+		else
+			for (i = offset; i < length(); i++) {
+				if (iswspace(buf[i])) {
+					// buf[i] = 0;
+					break;
+				}
+			}
+	}
+
+	ParserPP(const char *fname): Parser(fname) {}
+};
+
+struct ItemAciParser {
+	ParserPP *in;
+	ParserPP *strb;
+	invItem *curItem;
+	invItem *icurItem;
+
+	fixedStr *ActiveText;
+	fixedStr *DeactiveText;
+
+	fixedStr *getStr_byLang() {
+		if (lang() == RUSSIAN) {
+			in->skip_name();
+			return in->copy_name();
+		}
+		return in->copy_name();
+	}
+
+	fixedStr *getStrB_byLang() {
+		if (lang() == RUSSIAN) {
+			strb->skip_name();
+			return strb->copy_name();
+		}
+		return strb->copy_name();
+	}
+
+	fixedStr *getStr() {
+		return in->copy_name();
+	}
+
+#define ReadStrB(val)        \
+	strb->search_name(#val); \
+	str = getStrB_byLang();  \
+	val = str;
+
+	void LoadStrBase() {
+		fixedStr *str;
+		ReadStrB(ActiveText);
+		ReadStrB(DeactiveText);
+
+		delete strb;
+	}
+
+#define nextStr() \
+	delete str;   \
+	str = getStr()
+
+#define checkPoint(initedWhat) std::cout << "Inited " #initedWhat<<'\n';
+
+	void ParseItem() {
+		int i, j;
+		fixedStr *str;
+		char *buf;
+		curItem = new invItem;
+
+		in->search_name("name");
+		str = getStr_byLang();
+		curItem->ID_ptr = str->Data;
+		delete str;
+
+		in->search_name("promptData");
+		str = getStr_byLang();
+		if (strcmp("NONE", str->Data))
+			str->move_buf(&curItem->promptData);
+
+		in->search_name("prmTemplate");
+		str = getStr_byLang();
+		if (strcmp("NONE", str->Data))
+			str->move_buf(&curItem->pTemplate);
+
+		in->search_name("nonlf");
+		str = getStr();
+		if (strcmp("NONE", str->Data)) {
+			if (strcmp("{", str->Data))
+				ErrH.Abort("ParserPP::Bad nonlinear field syntaxis...", 1, -1, curItem->ID_ptr.c_str());
+			while (1) {
+				nextStr();
+				if (!strcmp("}", str->Data)) {
+					break;
+				}
+				if (!strcmp("CraftWithID", str->Data)) {
+					nextStr();
+					curItem->CraftWithID = atoi(str->Data);
+					continue;
+				}
+				if (!strcmp("CraftResultID", str->Data)) {
+					nextStr();
+					curItem->CraftResultID = atoi(str->Data);
+					continue;
+				}
+				if (!strcmp("Activatable", str->Data)) {
+					curItem->ActiveState = 0;
+					ActiveText->copy_buf(&curItem->ActiveText, 1);
+					DeactiveText->copy_buf(&curItem->DeactiveText, 1);
+					continue;
+				}
+
+				ErrH.Abort("ParserPP::Unknown keyword in nonlinear field...", 1, -1, str->Data);
+			}
+		}
+
+
+		in->search_name("id");
+		curItem->ID = in->get_int();
+
+		in->search_name("class");
+		curItem->classID = in->get_int();
+
+		in->search_name("slotType");
+		curItem->slotType = in->get_int();
+
+		in->search_name("shape");
+		curItem->ShapeLen = in->get_int();
+
+		if (!curItem->ShapeLen) {
+			RVERR("Item without shape...", curItem->ID_ptr.c_str());
+		}
+
+		curItem->ShapeX = new int[curItem->ShapeLen];
+		curItem->ShapeY = new int[curItem->ShapeLen];
+
+
+		// in->skip_name();
+		for (i = 0; i < curItem->ShapeLen; i++) {
+			curItem->ShapeX[i] = in->get_int();
+			// in->skip_name();
+
+			curItem->ShapeY[i] = in->get_int();
+			// in->skip_name();
+		}
+
+		in->search_name("event");
+		curItem->EvCode = in->get_int();
+
+		in->search_name("flags");
+		int flagsCount = in->get_int();
+		// in->skip_name();
+
+		for (i = 0; i < flagsCount; i++) {
+			str = in->copy_name();
+			bool found = 0;
+			for (j = 0; j < INV_ITEM_FLAGS_MAX; j++) {
+				if (!strcmp(str->Data, flagsStrTable[j])) {
+					found = 1;
+					curItem->flags |= flagsTable[j];
+					break;
+				}
+			}
+			if (!found)
+				ErrH.Abort("item_aci.lst: Unknown item flag...", 1, -1, str->Data);
+			delete str;
+		}
+
+		in->search_name("fncMenuType");
+		int fncMenuType = in->get_int();
+		if (fncMenuType != -1) {
+			iListElement *fncmenu = aScrDisp->menuList->first;
+			for (i = 0; i < aScrDisp->menuList->Size; i++) {
+				if (((fncMenu *)(fncmenu))->type == fncMenuType) {
+					curItem->menu = fncmenu;
+					break;
+				}
+
+				fncmenu = fncmenu->next;
+			}
+			if (i == aScrDisp->menuList->Size)
+				ErrH.Abort("item_aci.lst: Unknown fncMenuType...", 1, fncMenuType);
+		}
+
+////////// ISCREEN SECTION
+
+		icurItem = new invItem(*curItem);
+		icurItem->copyNewPtrs(curItem);
+
+
+		in->search_name("bmp_file");
+		str = getStr();
+		curItem->fname = str->Data;
+
+		in->search_name("ibmp_file");
+		str = getStr();
+		icurItem->fname = str->Data;
+
+		in->search_name("comments");
+		int commentsNum;
+		if (lang() == RUSSIAN) {
+			commentsNum = in->get_int();
+			in->skip_name();
+			for (i = 0; i < commentsNum; i++)
+				in->skip_name();
+			commentsNum = in->get_int();
+			curItem->numComments = commentsNum;
+			if (curItem->numComments) {
+				curItem->comments = new char *[commentsNum];
+				for (i = 0; i < commentsNum; i++) {
+					str = getStr();
+					str->move_buf(curItem->comments + i);
+				}
+			}
+		} else {
+			commentsNum = in->get_int();
+			curItem->numComments = commentsNum;
+			if (curItem->numComments) {
+				curItem->comments = new char *[commentsNum];
+				for (i = 0; i < commentsNum; i++) {
+					str = getStr();
+					str->move_buf(curItem->comments + i);
+				}
+			}
+		}
+
+
+		in->search_name("icomments");
+		if (lang() == RUSSIAN) {
+			commentsNum = in->get_int();
+			in->skip_name();
+			for (i = 0; i < commentsNum; i++)
+				in->skip_name();
+			commentsNum = in->get_int();
+			icurItem->numComments = commentsNum;
+			if (icurItem->numComments) {
+				icurItem->comments = new char *[commentsNum];
+				for (i = 0; i < commentsNum; i++) {
+					str = getStr();
+					str->move_buf(icurItem->comments + i);
+				}
+			}
+		} else {
+			commentsNum = in->get_int();
+			icurItem->numComments = commentsNum;
+			if (icurItem->numComments) {
+				icurItem->comments = new char *[commentsNum];
+				for (i = 0; i < commentsNum; i++) {
+					str = getStr();
+					str->move_buf(icurItem->comments + i);
+				}
+			}
+		}
+
+
+		#define strCheck() if(str->Size >= ACI_MAX_PRM_LEN){ RVERR("Too big shop parameter: ", str->Data);}
+
+		in->search_name("shopPrms");
+		str = getStr();
+		if (strcmp("NONE", str->Data)) {
+			icurItem->alloc_prm();
+			if (strcmp("Damage:", str->Data))
+				ErrH.Abort("Unknown shopPrms val: ", 1, -1, str->Data);
+			str = in->copy_name();
+			strCheck();
+			memcpy(icurItem->pData + ACI_WEAPON_DAMAGE * ACI_MAX_PRM_LEN, str->Data, str->Size);
+			delete str;
+
+
+			in->search_name("Load:");
+			str = in->copy_name();
+			strCheck();
+			memcpy(icurItem->pData + ACI_WEAPON_LOAD * ACI_MAX_PRM_LEN, str->Data, str->Size);
+			delete str;
+
+
+			in->search_name("Shots(sec):");
+			str = in->copy_name();
+			strCheck();
+			memcpy(icurItem->pData + ACI_WEAPON_SHOTS_SEC * ACI_MAX_PRM_LEN, str->Data, str->Size);
+			delete str;
+
+
+			in->search_name("Range:");
+			str = in->copy_name();
+			strCheck();
+			memcpy(icurItem->pData + ACI_WEAPON_RANGE * ACI_MAX_PRM_LEN, str->Data, str->Size);
+			delete str;
+		}
+
+
+		in->search_name("avi_picture");
+		str = getStr();
+		icurItem->numAviIDs = 3;
+		icurItem->avi_ids = new char *[3];
+		str->move_buf(icurItem->avi_ids + ACI_PICTURE_AVI_ENG);
+
+		in->search_name("avi_text_eng");
+		str = getStr();
+		str->move_buf(icurItem->avi_ids + ACI_TEXT_AVI_ENG);
+
+		in->search_name("avi_text_rus");
+		str = getStr();
+		str->move_buf(icurItem->avi_ids + ACI_TEXT_AVI_RUS);
+
+
+		aScrDisp->add_item(curItem);
+		aScrDisp->add_iitem(icurItem);
+	}
+
+	void Parse() {
+		in = new ParserPP("items_aci.lst");
+		strb = new ParserPP("strbase.lst");
+
+		LoadStrBase();
+
+		for (int i = 0; i < ACI_MAX_TYPE; i++) {
+			ParseItem();
+
+#ifdef FDEBUG
+			std::cout << "ParserPP::Successfully inited item \"" << curItem->ID_ptr.c_str() << "\" ("
+					  << i << '/' << ACI_MAX_TYPE << ")\n";
+#endif
+		}
+	}
+};
+
+
 extern iScreenOption** iScrOpt;
 
 void aInit(void)
@@ -544,47 +971,48 @@ void aInit(void)
 	GameOverID = 0;
 	aciInitStrings();
 
-	if(!aIndArrowBML){
+	if (!aIndArrowBML) {
 		aIndArrowBML = new bmlObject;
-		aIndArrowBML -> flags |= BML_NO_OFFSETS;
-		if(actintLowResFlag)
-			aIndArrowBML -> load("resource/actint/640x480/ind_data/arrow.bml");
-		else
-			aIndArrowBML -> load("resource/actint/800x600/ind_data/arrow.bml");
+		aIndArrowBML->flags |= BML_NO_OFFSETS;
+		// if(actintLowResFlag)
+		//	aIndArrowBML -> load("resource/actint/640x480/ind_data/arrow.bml");
+		// else
+		aIndArrowBML->load("resource/actint/800x600/ind_data/arrow.bml");
 	}
-	if(!aIndDataBML){
+	if (!aIndDataBML) {
 		aIndDataBML = new bmlObject;
-		aIndDataBML -> flags |= BML_NO_OFFSETS;
-		if(actintLowResFlag)
-			aIndDataBML -> load("resource/actint/640x480/ind_data/data.bml");
-		else
-			aIndDataBML -> load("resource/actint/800x600/ind_data/data.bml");
+		aIndDataBML->flags |= BML_NO_OFFSETS;
+		// if(actintLowResFlag)
+		//	aIndDataBML -> load("resource/actint/640x480/ind_data/data.bml");
+		// else
+		aIndDataBML->load("resource/actint/800x600/ind_data/data.bml");
 	}
-	if(!aIndBackBML){
+	if (!aIndBackBML) {
 		aIndBackBML = new bmlObject;
-		aIndBackBML -> flags |= BMP_FLAG;
-		if(actintLowResFlag)
-			aIndBackBML -> load("resource/actint/640x480/ind_data/back.bmp");
-		else
-			aIndBackBML -> load("resource/actint/800x600/ind_data/back.bmp");
+		aIndBackBML->flags |= BMP_FLAG;
+		// if(actintLowResFlag)
+		//	aIndBackBML -> load("resource/actint/640x480/ind_data/back.bmp");
+		// else
+		aIndBackBML->load("resource/actint/800x600/ind_data/back.bmp");
 	}
-	if(!aciSpeechSeq){
+	if (!aciSpeechSeq) {
 		aciSpeechSeq = new aciML_EventSeq;
-		aciSpeechSeq -> alloc_mem(256);
+		aciSpeechSeq->alloc_mem(256);
 	}
 
-	if(!aciCurRaceType)
-			aciCurRaceType = new char[10];
+	if (!aciCurRaceType)
+		aciCurRaceType = new char[10];
 
-	if(!aciCurRaceInfo)
-			aciCurRaceInfo = new char[10];
+	if (!aciCurRaceInfo)
+		aciCurRaceInfo = new char[10];
 
-	if(!aciTreeData){
+	if (!aciTreeData) {
 		aciTreeData = new aciCHTree;
-		aciTreeData -> load("resource/iscreen/ldata/l7/border.xbm");
+		aciTreeData->load("resource/iscreen/ldata/l7/border.xbm");
 	}
 
 #ifdef _BINARY_SCRIPT_
+	/*
 	if(actintLowResFlag){
 		if(lang() == RUSSIAN){
 			aParseScript("resource/actint/aci_low2.scb");
@@ -595,17 +1023,18 @@ void aInit(void)
 			acsParseScript("resource/actint/acs_low.scb");
 		}
 	}
-	else {
-		if(lang() == RUSSIAN){
-			aParseScript("resource/actint/aci_hi2.scb");
-			acsParseScript("resource/actint/acs_low2.scb");
-		}
-		else {
-			aParseScript("resource/actint/aci_hi.scb");
-			acsParseScript("resource/actint/acs_low.scb");
-		}
+	else {*/
+	if (lang() == RUSSIAN) {
+		aParseScript("resource/actint/aci_hi2.scb");
+		acsParseScript("resource/actint/acs_low2.scb");
+	} else {
+		aParseScript("resource/actint/aci_hi.scb");
+		acsParseScript("resource/actint/acs_low.scb");
 	}
+
+	//}
 #else
+	/*
 	if(actintLowResFlag){
 		if(lang() == RUSSIAN){
 			aParseScript("actint/aci_low2.scr","resource/actint/aci_low2.scb");
@@ -615,24 +1044,40 @@ void aInit(void)
 			aParseScript("actint/aci_low.scr","resource/actint/aci_low.scb");
 			acsParseScript("actint/acs_low.scr","resource/actint/acs_low.scb");
 		}
+
 	}
 	else {
-		if(lang() == RUSSIAN){
-			aParseScript("actint/aci_hi2.scr","resource/actint/aci_hi2.scb");
-			acsParseScript("actint/acs_low2.scr","resource/actint/acs_low2.scb");
-		}
-		else {
-			aParseScript("actint/aci_hi.scr","resource/actint/aci_hi.scb");
-			acsParseScript("actint/acs_low.scr","resource/actint/acs_low.scb");
-		}
+	*/
+// Revangers::f("should generator work with binary scripts?.. i think no one will use it with binary
+// scripts.")
+#	ifndef GENERATE_ITEMS_ACI
+	if (lang() == RUSSIAN) {
+		aParseScript("actint/aci_hi2.scr", "resource/actint/aci_hi2.scb");
+		acsParseScript("actint/acs_low2.scr", "resource/actint/acs_low2.scb");
+	} else {
+		aParseScript("actint/aci_hi.scr", "resource/actint/aci_hi.scb");
+		acsParseScript("actint/acs_low.scr", "resource/actint/acs_low.scb");
 	}
+	ItemAciParser IAP;
+	IAP.Parse();
+
+#	else
+	std::cout << "FIRST ENG PARSE\n";
+	aParseScript("actint/aci_hi.scr", "resource/actint/aci_hi.scb", 0);
+	std::cout << "SECOND RUS PARSE\n";
+	aParseScript("actint/aci_hi2.scr", "resource/actint/aci_hi2.scb", 1);
+
+	saveItemsAci();
+
+	ErrH.Abort("[ITEM ACI GENERATOR] SUCCESS");
+#	endif
+//	}
 #endif
 	a_calc_tables();
 
-	if(!NetworkON){
-		aciUpdateCurCredits(ACI_STARTUP_CREDITS + beebos);
-	}
-	else {
+	if (!NetworkON) {
+		// aciUpdateCurCredits(ACI_STARTUP_CREDITS + beebos);
+	} else {
 		aciDisableParametersMenu();
 	}
 

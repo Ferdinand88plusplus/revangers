@@ -139,6 +139,10 @@ const int EXTERNAL_IMPULSE_TIME = 50;
 
 const int MAX_PASSAGE_DELAY = 50;
 
+#define GetRaffaID(uvsVangerPtr) \
+	(uvsVangerPtr->Pmechos->type - (MAX_MECHOS_RAFFA + MAX_MECHOS_CONSTRACTOR) + 1)
+
+
 struct UnitItemMatrix
 {
 	int ID;
@@ -354,18 +358,75 @@ const int AI_SLAVE = 1;
 
 const int MAX_AMMO_USE = 2;
 
+struct GunSlot;
+
+struct GunSlotFlag {
+	enum {
+		CLOSE_GUN = 1 << 0,
+		OPEN_GUN = 1 << 1,
+	};
+};
+
+struct GunSubSlot {
+
+	GunDevice *ItemData;
+	WorldBulletTemplate *pData;
+	int GunStatus;
+	Object *MyModel;
+	int Time;
+
+	float XOffs = 0;
+
+	int MyOffs = -1;
+	char GSFlags = 0;
+
+	// linking from owner GunSlot
+	int nSlot;
+	int ControlFlag;
+	VangerUnit *Owner;
+	GeneralObject *TargetObject;
+	GeneralObject *aiTargetObject;
+	GunSlot *OwnerSlot;
+	int RealSpeed;
+	Vector vPlace, vFire;
+	DBM mPlace, mFire;
+
+	void getFirePos();
+
+	void clear();
+	void open(GunDevice *p);
+	void close();
+
+	void fire();
+	void quant();
+
+	void typedFire();
+
+	void hypnoFire();
+	void fireballFire();
+	void laserFire();
+	void hordeFire();
+	void jumpballFire();
+
+	int checkTarget(ActionUnit *p);
+	
+	// TODO: add network support
+	void NetUpdate() {
+		
+	}
+};
+
 struct GunSlot
 {
 	int NetID;
 	int StuffNetID;
 	int nSlot;
-	GunDevice* ItemData;
-	WorldBulletTemplate* pData;
+	
+	std::vector<GunSubSlot*> Slots;
+
 	int RealSpeed;
-	int Time;
-	int GunStatus;
-	Vector vPlace,vFire;
-	DBM mPlace,mFire;
+	//Vector vPlace,vFire;
+	//DBM mPlace,mFire;
 	VangerUnit* Owner;
 	int ControlFlag;
 	GeneralObject* TargetObject;
@@ -376,10 +437,12 @@ struct GunSlot
 	void OpenSlot(int slot,VangerUnit* own,int ind);
 	void CloseSlot(void);
 	void OpenGun(GunDevice* p);
-	void CloseGun(void);
+	void CloseGun(int pos);
 	void Fire(void);
 	void Quant(void);
 	int CheckTarget(ActionUnit* p);
+	void ShareInfo(GunSubSlot* with);
+	void ResetOffsets();
 	
 	void RemoteFire(void);
 
@@ -454,6 +517,7 @@ extern aiUnitEvent aiGlobalEventData[2][AI_EVENT_MAX][AI_GLOBAL_EVENT_MAX];
 										    aiGlobalEventData[aiWriteEvent][type][aiNumGlobalEvent[aiWriteEvent][type]].Refresh = 1;\
 										    aiNumGlobalEvent[aiWriteEvent][type]++;}\
 										}\
+
 
 const int AI_RESOLVE_ATTACK = 0;
 const int AI_RESOLVE_FIND = 1;
@@ -633,7 +697,11 @@ const int SAFE_STUFF_MAX = 3;
 
 struct VangerUnit : TrackUnit , uvsUnitType , aiFactorType
 {
+	Vector CamPos;
+	Vector CamImp;
+
 	Vector vMove;
+	bool MoveCam2R = 1;
 
 	int ShellNetID;
 	int ShellUpdateFlag;
@@ -799,6 +867,8 @@ struct VangerUnit : TrackUnit , uvsUnitType , aiFactorType
 
 	int PrevImpuseFrame;
 
+	void CmdIn();
+
 	void Init(StorageType* s);
 	void Free(void);
 
@@ -827,7 +897,7 @@ struct VangerUnit : TrackUnit , uvsUnitType , aiFactorType
 	void CreateParticleRotor(const Vector& v,int r);
 	void CreateParticleMechos(const Vector& v,int r, int type = 0);	
 
-	void AddFree(void);
+	void AddFree(bool fast = 0);
 	void AddPassage(SensorDataType* p);
 	void AddEscave(SensorDataType* p);
 	void AddSpot(SensorDataType* p);
@@ -953,7 +1023,6 @@ struct CompasObject
 //const int SPEETLE_AMMO = 0;
 //const int CRUSTEST_AMMO = 1;
 
-const int RES_DRAW_LEFT = 150;
 const int RES_DRAW_DOWN = 80;
 const int RES_DRAW_STEP_Y = 10;
 const int RES_DRAW_MAX_SIZE = 300;
@@ -998,8 +1067,10 @@ const int LOCATOR_DATA_RADIUS = 300;
 
 const int GAME_OVER_EVENT_TIME = 20*15;
 
+
 struct ActionDispatcher : UnitList 
 {
+
 	int PassageTouchEnable;
 
 	int CameraModifier;
@@ -1043,6 +1114,8 @@ struct ActionDispatcher : UnitList
 	void Open(Parser& in);
 	void Close(void);
 	void Quant(void);
+	void TripQuant(void);
+	void RainQuant(void);
 	void keyhandler(int key);
 
 	VangerUnit* GetNextVanger(ActionUnit* p);
@@ -1062,6 +1135,7 @@ struct ActionDispatcher : UnitList
 	int DoorEnable;
 
 	StuffObject* Slot[MAX_ACTIVE_SLOT];
+
 	
 	void CreateActive(VangerUnit* p);
 
@@ -1159,6 +1233,7 @@ extern Vector vInsectTarget;
 extern int UnitGlobalTime;
 
 int ChargeWeapon(VangerUnit* p,int ind,int sign);
+int ChargeFamily(VangerUnit *p, int ind, int sign);
 int ChargeDevice(VangerUnit* p,int ind,int sign);
 void CreatePhantomTarget(void);
 void ObjectDestroy(GeneralObject* p,int mode = 1);

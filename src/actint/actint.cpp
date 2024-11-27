@@ -457,6 +457,34 @@ int aciCurIND = 0;
 int aciIndMove = 0;
 #endif
 
+int flagsTable[INV_ITEM_FLAGS_MAX] = {
+	AS_ITEM_DATA_LOADED,
+	INV_CLONE,
+	INV_ITEM_REDRAW,
+	INV_ITEM_SHOW_LOAD,
+	INV_ITEM_NO_PAY,
+	INV_ITEM_NO_ACTIVATE,
+	INV_ITEM_SHOW_ESCAVE,
+	INV_ITEM_NEW,
+};
+
+const char *flagsStrTable[INV_ITEM_FLAGS_MAX] = {
+	"$DataLoaded",
+	"$Clone",
+	"$Redraw",
+	"$ShowLoad",
+	"$NoPay",
+	"$NoActivate",
+	"$ShowEscave",
+	"$New",
+};
+
+std::vector<int> startItemsID;
+
+// Items count
+int ACI_MAX_TYPE = -1;
+
+
 aciBitmapMenuItem::aciBitmapMenuItem(void)
 {
 	ID = 0;
@@ -873,8 +901,8 @@ aciLocationInfo::aciLocationInfo(void)
 	numGateShutters = 0;
 	GateShutters = NULL;
 
-	ExcludeItems = new char[ACI_MAX_TYPE];
-	memset(ExcludeItems,0,ACI_MAX_TYPE);
+	ExcludeItems = new char[ACI_MAX_TYPE + 1];
+	memset(ExcludeItems, 0, ACI_MAX_TYPE + 1);
 
 	objIDs = new char*[ACI_NUM_OBJECTS];
 	objList = new iListElement*[ACI_NUM_OBJECTS];
@@ -1426,6 +1454,7 @@ actIntDispatcher::~actIntDispatcher(void)
 	}
 	delete locationList;
 
+
 	it = (invItem*)itemList -> last;
 	while(it){
 		it1 = (invItem*)it -> prev;
@@ -1434,6 +1463,7 @@ actIntDispatcher::~actIntDispatcher(void)
 	}
 	delete itemList;
 
+
 	it = (invItem*)i_itemList -> last;
 	while(it){
 		it1 = (invItem*)it -> prev;
@@ -1441,6 +1471,8 @@ actIntDispatcher::~actIntDispatcher(void)
 		it = it1;
 	}
 	delete i_itemList;
+
+	std::cout<<"Finished\n";
 
 	p = (fncMenu*)menuList -> last;
 	while(p){
@@ -1568,8 +1600,83 @@ actIntDispatcher::~actIntDispatcher(void)
 	flags = 0;
 }
 
-invItem::invItem(void)
+#define copyPtr(ptr, type) ptr = new type(*(from->ptr))
+#define copyPtrCArr(ptr, type) ptr = new type[sz];\
+	memcpy(ptr, from->ptr, sz*sizeof(type));\
+	sz = 0
+
+//invItem* ptr = new invItem(*otherPtr) 
+//------------------------^
+//this is copies item, but the ptrs is not are "new" copies but a just copied pointers
+//thats why after this copying you need to call copyNewPtrs	
+void invItem::copyNewPtrs(invItem *from) 
 {
+	int i, sz;
+	if (partData) {
+		copyPtr(partData, aciMechosPartInfo);
+	}
+
+	if (fname) {
+		sz = strlen(fname) + 1;
+		copyPtrCArr(fname, char);
+	}
+
+	if (flags & AS_ITEM_DATA_LOADED) {
+		sz = ScreenSizeX * ScreenSizeY;
+		copyPtrCArr(frame, char);
+	}
+
+	if (pData) {
+		sz = ACI_MAX_PRM_LEN * INV_ITEM_NUM_PARAMS;
+		copyPtrCArr(pData, char);
+	}
+
+	if (pTemplate) {
+		sz = strlen(pTemplate)+1;
+		copyPtrCArr(pTemplate, char);
+	}
+
+	if (promptData) {
+		sz = strlen(promptData) + 1;
+		copyPtrCArr(promptData, char);
+	}
+
+	if (numAviIDs) {
+		avi_ids = new char *[numAviIDs];
+		for (i = 0; i < numAviIDs; i++) {
+			if (from->avi_ids[i]) {
+				sz = strlen(from->avi_ids[i])+1;
+				copyPtrCArr(avi_ids[i], char);
+			}
+		}
+	}
+
+
+	if (ShapeLen) {
+		sz = ShapeLen;
+		copyPtrCArr(ShapeX, int);
+
+		sz = ShapeLen;
+		copyPtrCArr(ShapeY, int);
+	}
+
+	if (numComments) {
+		comments = new char*[numComments];
+		for (i = 0; i < numComments; i++) {
+			sz = strlen(from->comments[i])+1;
+			copyPtrCArr(comments[i], char);
+		}
+	}
+
+	if (ActiveState >= 0) {
+		sz = strlen(ActiveText)+1;
+		copyPtrCArr(ActiveText, char);
+		sz = strlen(DeactiveText)+1;
+		copyPtrCArr(DeactiveText, char);
+	}
+}
+
+invItem::invItem(void) {
 	ID = 0;
 
 	slotType = -1;
@@ -1618,28 +1725,37 @@ invItem::~invItem(void)
 {
 	int i;
 	ScreenSizeX = ScreenSizeY = 0;
+	int deep = 0;
 
 	if(flags & INV_CLONE){
 		ID_ptr.clear();
 	}
 	else {
-		if(partData) delete partData;
+		if(partData)
+			delete partData;
 
-		if(fname) {
+
+		if(fname) 
 			delete[] fname;
-		}
+		
+
 
 		if(flags & AS_ITEM_DATA_LOADED)
 			delete[] frame;
 
+
 		if(pData)
 			delete[] pData;
 
-		if(pTemplate)
+
+		if (pTemplate) 
 			delete[] pTemplate;
+		
+
 
 		if(promptData)
 			delete[] promptData;
+
 
 		if(numAviIDs){
 			for(i = 0; i < numAviIDs; i ++){
@@ -1648,14 +1764,26 @@ invItem::~invItem(void)
 			delete[] avi_ids;
 		}
 
-		if(ShapeX) delete[] ShapeX;
-		if(ShapeY) delete[] ShapeY;
+
+		if (ShapeX) {			
+			delete[] ShapeX;
+		}
+		if (ShapeY) {
+			delete[] ShapeY;
+		}
 
 		if(numComments){
 			for(i = 0; i < numComments; i ++)
 				delete[] comments[i];
 			delete[] comments;
 		}
+
+
+		if (ActiveState >= 0) {
+			delete[] ActiveText;
+			delete[] DeactiveText;
+		}
+
 	}
 }
 
@@ -1911,6 +2039,14 @@ void invItem::clone(invItem* p)
 	p -> partData = partData;
 
 	p -> flags |= INV_CLONE;
+
+	p->CraftResultID = CraftResultID;
+	p->CraftWithID = CraftWithID;
+
+	p->ActiveState = ActiveState;
+
+	p->ActiveText = ActiveText;
+	p->DeactiveText = DeactiveText;
 }
 
 void invItem::init_name(char* p)
@@ -2123,6 +2259,7 @@ int invMatrix::check_fit(int x,int y,invItem* p)
 
 int invMatrix::auto_put_item(invItem* p)
 {
+	
 	int x,y,offs = 0;
 	for(y = 0; y < SizeY; y ++){
 		for(x = 0; x < SizeX; x ++){
@@ -2138,7 +2275,7 @@ int invMatrix::auto_put_item(invItem* p)
 
 int invMatrix::put_item(int x,int y,invItem* p,int mode)
 {
-	int i,offs = 0,ix,iy;
+	int i,offs = 0,ix,iy, cellType = -1, cellNum = -1;
 	if(!check_fit(x,y,p))
 		return 0;
 
@@ -2157,13 +2294,20 @@ int invMatrix::put_item(int x,int y,invItem* p,int mode)
 
 		offs = ix + iy * SizeX;
 		matrix[offs] -> put_item(p);
+		cellType = matrix[offs]->slotType;
+		cellNum = matrix[offs]->slotNumber;
+	}
+
+
+	if(cellType == 1 && !mode){
+		aciSendEvent2itmdsp(ACI_SLOT_IN, p->item_ptr, cellNum);
 	}
 	
 	items -> connect((iListElement*)p);
 	if(!mode)
 		p -> dropCount = items -> Size;
-	if(p -> slotType != -1)
-		fill(p);
+	//if(p -> slotType != -1)
+	//	fill(p);
 	return 1;
 }
 
@@ -4232,6 +4376,19 @@ void actIntDispatcher::i_init(void)
 	aciML_D -> init();
 	aciPutTreasureItem();
 	aciML_D -> startup();
+
+	for(int id : startItemsID){
+		invItem* item = (invItem*)i_itemList->first;
+		bool found = 0;
+		for(int i = 0 ;i < i_itemList->Size; i++){
+			if(item->ID == id) break;
+			item = (invItem*)item->next;
+		}
+		if(i == i_itemList->Size){
+			ErrH.Abort("Failed to get start item", 1, id);
+		}
+		put_item_auto(new invItem(*item));
+	}
 }
 
 void actIntDispatcher::finit(void)
@@ -6182,6 +6339,13 @@ int actIntDispatcher::put_item_auto(invItem* p1)
 
 int actIntDispatcher::put_item_xy(invItem* p,int x,int y,int sflag)
 {
+	auto result =
+		vss::sys()
+			.quant(vss::SEND_EVENT_QUANT)
+			.prop("code", EV_VSS_PUT_ITEM_XY)
+			.prop("data", p->ID)
+			.send();
+
 	int id = 0;
 	actintItemData* d;
 	invMatrix* m = (sflag) ? secondMatrix : curMatrix;
@@ -6292,6 +6456,8 @@ void actIntDispatcher::inv_mouse_quant_l(void)
 	else {
 		if(!(flags & AS_ISCREEN)){
 			if(flags & AS_INV_MOVE_ITEM){
+				curItem->item_ptr->ActiveState = curItem->ActiveState;
+
 				aciSendEvent2itmdsp(ACI_DROP_ITEM,curItem -> item_ptr);
 				restore_mouse_cursor();
 				if(curItem -> menu){
@@ -6350,115 +6516,135 @@ void actIntDispatcher::inv_mouse_quant_l(void)
 	}
 }
 
-void actIntDispatcher::inv_mouse_quant_r(void)
+int ActInt_to_Item(int InType);
+
+void actIntDispatcher::inv_mouse_quant_r(void) 
 {
-	int x,y,index;
-	invItem* p = NULL;
+	int x, y, index;
+	invItem *p = NULL;
 
 	int mx = iMouseX;
 	int my = iMouseY;
 
-	if(flags & AS_ISCREEN) mx += iScreenOffs - 800;
+	if (flags & AS_ISCREEN)
+		mx += iScreenOffs - 800;
 
-	if(curMatrix && curMatrix -> check_xy(mx,my)){
-		if(flags & AS_INV_MOVE_ITEM){
-			x = iMouseX - curMatrix -> ScreenX - (curItem -> ShapeSizeX >> 1) + curItem -> ShapeCenterX;
-			y = iMouseY - curMatrix -> ScreenY - (curItem -> ShapeSizeY >> 1) + curItem -> ShapeCenterY;
+	if (curMatrix && curMatrix->check_xy(mx, my)) {
+		if (flags & AS_INV_MOVE_ITEM) {
+			x = iMouseX - curMatrix->ScreenX - (curItem->ShapeSizeX >> 1) + curItem->ShapeCenterX;
+			y = iMouseY - curMatrix->ScreenY - (curItem->ShapeSizeY >> 1) + curItem->ShapeCenterY;
 
-			if(flags & AS_ISCREEN)
+			if (flags & AS_ISCREEN)
 				x += iScreenOffs - 800;
 
 			y /= aCellSize - (aCellSize >> 2);
 
-			if(y & 0x01) x -= (aCellSize >> 1);
+			if (y & 0x01)
+				x -= (aCellSize >> 1);
 			x /= aCellSize;
-		}
-		else {
-			x = iMouseX - curMatrix -> ScreenX;
-			y = iMouseY - curMatrix -> ScreenY;
+		} else {
+			x = iMouseX - curMatrix->ScreenX;
+			y = iMouseY - curMatrix->ScreenY;
 
-			if(flags & AS_ISCREEN)
+			if (flags & AS_ISCREEN)
 				x += iScreenOffs - 800;
 
 			y /= aCellSize - (aCellSize >> 2);
 
-			if(y & 0x01) x -= (aCellSize >> 1);
+			if (y & 0x01)
+				x -= (aCellSize >> 1);
 			x /= aCellSize;
 		}
-		index = x + y * curMatrix -> SizeX;
+		index = x + y * curMatrix->SizeX;
 
-		if(x >= 0 && x < curMatrix -> SizeX && y >= 0 && y < curMatrix -> SizeY){
-			if(flags & AS_INV_MOVE_ITEM){
-				if(curMatrix -> check_fit(x,y,curItem)){
-					if(flags & AS_ISCREEN && curItem -> flags & INV_ITEM_NO_PAY){
-						if(!aciCheckItemCredits()) return;
+		if (x >= 0 && x < curMatrix->SizeX && y >= 0 && y < curMatrix->SizeY) {
+			if (flags & AS_INV_MOVE_ITEM) {
+				if (curMatrix->check_fit(x, y, curItem)) {
+					if (flags & AS_ISCREEN && curItem->flags & INV_ITEM_NO_PAY) {
+						if (!aciCheckItemCredits())
+							return;
 						aciPay4Item(curItem);
 					}
-					put_item_xy(curItem,x,y);
+					put_item_xy(curItem, x, y);
 					SOUND_DROP();
+				} else {
+
+					int ResultID = curItem->CraftResultID;
+
+					if (ResultID != -1) {
+						TryCraft(ResultID, x ,y);
+					} else {
+						TryCharge(x,y);
+					}
 				}
-			}
-			else {
-				if(!(flags & AS_ISCREEN)){
-					if(curMatrix -> matrix[index] -> flags & AS_BUSY_CELL){
-						p = curMatrix -> matrix[index] -> item;
-						if(p -> EvCode){
-							send_event(p -> EvCode,0,p -> item_ptr);
+			} else {
+				if (curMatrix->matrix[index]->flags & AS_BUSY_CELL) {
+					p = curMatrix->matrix[index]->item;
+
+					if (!(flags & AS_ISCREEN)) {
+						if (p->EvCode) {
+							send_event(p->EvCode, 0, p->item_ptr);
 							SOUND_DROP();
 						}
 					}
+
+					if (p->ActiveState >= 0) {
+						p->ActiveState = !p->ActiveState;
+						iP->set_redraw();
+						SOUND_DROP();
+					}
 				}
 			}
 		}
-	}
-	else {
-		if(!(flags & AS_ISCREEN)){
-			if(flags & AS_INV_MOVE_ITEM){
-				aciSendEvent2itmdsp(ACI_DROP_ITEM,curItem -> item_ptr);
+	} else {
+		if (!(flags & AS_ISCREEN)) {
+			if (flags & AS_INV_MOVE_ITEM) {
+				aciSendEvent2itmdsp(ACI_DROP_ITEM, curItem->item_ptr);
 				restore_mouse_cursor();
-				if(curItem -> menu){
-					remove_menu_item((fncMenu*)curItem -> menu);
+				if (curItem->menu) {
+					remove_menu_item((fncMenu *)curItem->menu);
 				}
 				free_item(curItem);
 				flags &= ~AS_INV_MOVE_ITEM;
 			}
-		}
-		else {
-			if(secondMatrix){
-				if(flags & AS_INV_MOVE_ITEM){
-					x = iMouseX - secondMatrix -> ScreenX - (curItem -> ShapeSizeX >> 1) + curItem -> ShapeCenterX;
-					y = iMouseY - secondMatrix -> ScreenY - (curItem -> ShapeSizeY >> 1) + curItem -> ShapeCenterY;
+		} else {
+			if (secondMatrix) {
+				if (flags & AS_INV_MOVE_ITEM) {
+					x = iMouseX - secondMatrix->ScreenX - (curItem->ShapeSizeX >> 1) +
+						curItem->ShapeCenterX;
+					y = iMouseY - secondMatrix->ScreenY - (curItem->ShapeSizeY >> 1) +
+						curItem->ShapeCenterY;
 
 					x += iScreenOffs - 800;
 
 					y /= aCellSize - (aCellSize >> 2);
 
-					if(y & 0x01) x -= (aCellSize >> 1);
+					if (y & 0x01)
+						x -= (aCellSize >> 1);
 					x /= aCellSize;
-				}
-				else {
-					x = iMouseX - secondMatrix -> ScreenX;
-					y = iMouseY - secondMatrix -> ScreenY;
+				} else {
+					x = iMouseX - secondMatrix->ScreenX;
+					y = iMouseY - secondMatrix->ScreenY;
 
 					x += iScreenOffs - 800;
 
 					y /= aCellSize - (aCellSize >> 2);
 
-					if(y & 0x01) x -= (aCellSize >> 1);
+					if (y & 0x01)
+						x -= (aCellSize >> 1);
 					x /= aCellSize;
 				}
-				index = x + y * secondMatrix -> SizeX;
+				index = x + y * secondMatrix->SizeX;
 
-				if(x >= 0 && x < secondMatrix -> SizeX && y >= 0 && y < secondMatrix -> SizeY){
-					if(flags & AS_INV_MOVE_ITEM){
-						if(secondMatrix -> check_fit(x,y,curItem)){
-							put_item_xy(curItem,x,y,1);
+				if (x >= 0 && x < secondMatrix->SizeX && y >= 0 && y < secondMatrix->SizeY) {
+					if (flags & AS_INV_MOVE_ITEM) {
+						if (secondMatrix->check_fit(x, y, curItem)) {
+							put_item_xy(curItem, x, y, 1);
 						}
 						SOUND_DROP();
-					}
-					else {
-						if(secondMatrix -> matrix[index] -> flags & AS_BUSY_CELL){
-							p = secondMatrix -> matrix[index] -> item;
+					} else {
+						if (secondMatrix->matrix[index]->flags & AS_BUSY_CELL) {
+							p = secondMatrix->matrix[index]->item;
 						}
 					}
 				}
@@ -6466,6 +6652,7 @@ void actIntDispatcher::inv_mouse_quant_r(void)
 		}
 	}
 }
+
 
 bmlObject* actIntDispatcher::get_back_bml(int id)
 {
@@ -6537,44 +6724,59 @@ void actIntDispatcher::set_move_item(int index,int sflag)
 	invMatrix* m = (sflag) ? secondMatrix : curMatrix;
 
 	invItem* p = m -> matrix[index] -> item;
+
+	auto result =
+		vss::sys()
+			.quant(vss::SEND_EVENT_QUANT)
+			.prop("code", EV_VSS_SET_MOVE_ITEM)
+			.prop("data", p->ID)
+		.send();
+
+	aciSendEvent2itmdsp(ACI_SLOT_OUT, p->item_ptr);
 	
 	m -> remove_item(p);
 
 	m -> put_item_shadow(p -> MatrixX,p -> MatrixY,p);
 
 	m -> set_redraw();
-	curItem = p;
-	set_mouse_cursor(p -> frame,p -> ScreenSizeX,p -> ScreenSizeY);
-	if(!(flags & AS_ISCREEN)){
-		if(p -> slotType != -1)
-			aciSendEvent2itmdsp(ACI_DEACTIVATE_ITEM,p -> item_ptr);
-	}
-	else {
-		if(p -> uvsDataPtr){
-			((uvsActInt*)p -> uvsDataPtr) -> pos_x = -1;
-			((uvsActInt*)p -> uvsDataPtr) -> pos_y = -1;
 
-			p -> MatrixX = p -> MatrixY = -1;
-		}
-	}
-	if(iP){
-		iP -> free_list();
-		iP -> add_item(curItem->ID_ptr.c_str(),-1,aciCurColorScheme[FM_SELECT_COL]);
-		if(!(flags & AS_ISCREEN)){
-			iP -> add_items(curItem -> numComments,curItem -> comments);
-			if(curItem -> pTemplate)
-				iP -> add_item(aciGetItemLoad(curItem,0));
-		}
-		else {
-			iP -> add_items(curItem -> numComments,curItem -> comments);
-			if(curItem -> pTemplate)
-				iP -> add_item(aciGetItemLoad(curItem,1));
-			if(!uvsCurrentWorldUnable)
-				iP -> add_item(aciGetPrice((iListElement*)curItem,ITEMS_MODE,1));
-		}
-		iP -> set_redraw();
-	}
+
+	directSetMoveItem(p, m);
 	flags |= AS_INV_MOVE_ITEM;
+}
+
+void actIntDispatcher::directSetMoveItem(invItem *p, invMatrix *m) {
+	curItem = p;
+	set_mouse_cursor(p->frame, p->ScreenSizeX, p->ScreenSizeY);
+	if (!(flags & AS_ISCREEN)) {
+		if (p->slotType != -1) {
+			aciSendEvent2itmdsp(ACI_DEACTIVATE_ITEM, p->item_ptr);
+			
+		}
+	} else {
+		if (p->uvsDataPtr) {
+			((uvsActInt *)p->uvsDataPtr)->pos_x = -1;
+			((uvsActInt *)p->uvsDataPtr)->pos_y = -1;
+
+			p->MatrixX = p->MatrixY = -1;
+		}
+	}
+	if (iP) {
+		iP->free_list();
+		iP->add_item(curItem->ID_ptr.c_str(), -1, aciCurColorScheme[FM_SELECT_COL]);
+		if (!(flags & AS_ISCREEN)) {
+			iP->add_items(curItem->numComments, curItem->comments);
+			if (curItem->pTemplate)
+				iP->add_item(aciGetItemLoad(curItem, 0));
+		} else {
+			iP->add_items(curItem->numComments, curItem->comments);
+			if (curItem->pTemplate)
+				iP->add_item(aciGetItemLoad(curItem, 1));
+			if (!uvsCurrentWorldUnable)
+				iP->add_item(aciGetPrice((iListElement *)curItem, ITEMS_MODE, 1));
+		}
+		iP->set_redraw();
+	}
 }
 
 void actIntDispatcher::change_items(int x,int y,int sflag)
@@ -6586,6 +6788,14 @@ void actIntDispatcher::change_items(int x,int y,int sflag)
 
 	invItem* p = m -> get_area_item(x,y,curItem);
 	if(!p) return;
+
+	auto result =
+		vss::sys()
+			.quant(vss::SEND_EVENT_QUANT)
+			.prop("code", EV_VSS_CHANGE_ITEMS)
+			.prop("data", curItem->ID)
+			.prop("ptr", p->ID)
+		.send();
 
 	m -> remove_item(p);
 	if(!m -> check_fit(x,y,curItem)){
@@ -6599,12 +6809,18 @@ void actIntDispatcher::change_items(int x,int y,int sflag)
 		}
 		aciPay4Item(curItem);
 	}
+	if(!(flags & AS_ISCREEN)){
+		if(p->slotType == 1){
+			aciSendEvent2itmdsp(ACI_SLOT_OUT, p->item_ptr);
+		}
+	}
 	m -> put_item(x,y,curItem);
 	m -> set_redraw();
 
 	if(!(flags & AS_ISCREEN)){
-		if(p -> slotType != -1)
+		if(p -> slotType != -1){
 			aciSendEvent2itmdsp(ACI_DEACTIVATE_ITEM,p -> item_ptr);
+		}
 	}
 
 	if(curItem -> slotType != -1){
@@ -7353,89 +7569,91 @@ void invMatrix::generate_floor(void)
 }
 #endif
 
-void actIntDispatcher::inv_mouse_move_quant(void)
-{
-	int x,y,ix,iy,isx,isy,id = -1;
-	invItem* p = NULL;
-	XBuffer* XBuf;
-	char* ptr;
+void actIntDispatcher::inv_mouse_move_quant(void) {
+	int x, y, ix, iy, isx, isy, id = -1;
+	invItem *p = NULL;
+	XBuffer *XBuf;
+	char *ptr;
 
-	aButton* bt;
+	aButton *bt;
 
-	XGR_MousePromptData* pr = NULL,*bt_pr0,*bt_pr1;
-	if(XGR_MouseObj.promptData){
-		pr = XGR_MouseObj.promptData -> getData(ACI_ITEM_PROMPT);
+	XGR_MousePromptData *pr = NULL, *bt_pr0, *bt_pr1;
+	if (XGR_MouseObj.promptData) {
+		pr = XGR_MouseObj.promptData->getData(ACI_ITEM_PROMPT);
 	}
-	if(pr) pr -> StartX = pr -> StartY = pr -> SizeX = pr -> SizeY = 0;
+	if (pr)
+		pr->StartX = pr->StartY = pr->SizeX = pr->SizeY = 0;
 
-	if(curMode != AS_INV_MODE)
+	if (curMode != AS_INV_MODE)
 		return;
 
 	bt = get_button(ACI_WPN_PICKUP_BUTTON);
-	if(bt){
-		if(XGR_MouseObj.promptData){
-			bt_pr0 = XGR_MouseObj.promptData -> getData(ACI_PICKUP_WPN_ON);
-			bt_pr1 = XGR_MouseObj.promptData -> getData(ACI_PICKUP_WPN_OFF);
-			if(!bt_pr1){
+	if (bt) {
+		if (XGR_MouseObj.promptData) {
+			bt_pr0 = XGR_MouseObj.promptData->getData(ACI_PICKUP_WPN_ON);
+			bt_pr1 = XGR_MouseObj.promptData->getData(ACI_PICKUP_WPN_OFF);
+			if (!bt_pr1) {
 				bt_pr1 = new XGR_MousePromptData;
-				bt_pr1 -> set_text(aciSTR_PICKUP_WEAPONS_OFF);
-				bt_pr1 -> ID = ACI_PICKUP_WPN_OFF;
-				XGR_MouseObj.promptData -> AddElement((XListElement*)bt_pr1);
+				bt_pr1->set_text(aciSTR_PICKUP_WEAPONS_OFF);
+				bt_pr1->ID = ACI_PICKUP_WPN_OFF;
+				XGR_MouseObj.promptData->AddElement((XListElement *)bt_pr1);
 			}
-			if(bt -> flags & B_PRESSED){
-				if(bt_pr0) bt_pr0 -> StartX = bt_pr0 -> StartY = bt_pr0 -> SizeX = bt_pr0 -> SizeY = 0;
-				bt_pr1 -> StartX = bt -> PosX;
-				bt_pr1 -> StartY = bt -> PosY;
+			if (bt->flags & B_PRESSED) {
+				if (bt_pr0)
+					bt_pr0->StartX = bt_pr0->StartY = bt_pr0->SizeX = bt_pr0->SizeY = 0;
+				bt_pr1->StartX = bt->PosX;
+				bt_pr1->StartY = bt->PosY;
 
-				bt_pr1 -> SizeX = bt -> SizeX;
-				bt_pr1 -> SizeY = bt -> SizeY;
-			}
-			else {
-				if(bt_pr1) bt_pr1 -> StartX = bt_pr1 -> StartY = bt_pr1 -> SizeX = bt_pr1 -> SizeY = 0;
-				if(bt_pr0){
-					bt_pr0 -> StartX = bt -> PosX;
-					bt_pr0 -> StartY = bt -> PosY;
+				bt_pr1->SizeX = bt->SizeX;
+				bt_pr1->SizeY = bt->SizeY;
+			} else {
+				if (bt_pr1)
+					bt_pr1->StartX = bt_pr1->StartY = bt_pr1->SizeX = bt_pr1->SizeY = 0;
+				if (bt_pr0) {
+					bt_pr0->StartX = bt->PosX;
+					bt_pr0->StartY = bt->PosY;
 
-					bt_pr0 -> SizeX = bt -> SizeX;
-					bt_pr0 -> SizeY = bt -> SizeY;
+					bt_pr0->SizeX = bt->SizeX;
+					bt_pr0->SizeY = bt->SizeY;
 				}
 			}
 		}
 	}
 	bt = get_button(ACI_ITM_PICKUP_BUTTON);
-	if(bt){
-		if(XGR_MouseObj.promptData){
-			bt_pr0 = XGR_MouseObj.promptData -> getData(ACI_PICKUP_ITM_ON);
-			bt_pr1 = XGR_MouseObj.promptData -> getData(ACI_PICKUP_ITM_OFF);
-			if(!bt_pr1){
+	if (bt) {
+		if (XGR_MouseObj.promptData) {
+			bt_pr0 = XGR_MouseObj.promptData->getData(ACI_PICKUP_ITM_ON);
+			bt_pr1 = XGR_MouseObj.promptData->getData(ACI_PICKUP_ITM_OFF);
+			if (!bt_pr1) {
 				bt_pr1 = new XGR_MousePromptData;
-				bt_pr1 -> set_text(aciSTR_PICKUP_ITEMS_OFF);
-				bt_pr1 -> ID = ACI_PICKUP_ITM_OFF;
-				XGR_MouseObj.promptData -> AddElement((XListElement*)bt_pr1);
+				bt_pr1->set_text(aciSTR_PICKUP_ITEMS_OFF);
+				bt_pr1->ID = ACI_PICKUP_ITM_OFF;
+				XGR_MouseObj.promptData->AddElement((XListElement *)bt_pr1);
 			}
-			if(bt -> flags & B_PRESSED){
-				if(bt_pr0) bt_pr0 -> StartX = bt_pr0 -> StartY = bt_pr0 -> SizeX = bt_pr0 -> SizeY = 0;
-				bt_pr1 -> StartX = bt -> PosX;
-				bt_pr1 -> StartY = bt -> PosY;
+			if (bt->flags & B_PRESSED) {
+				if (bt_pr0)
+					bt_pr0->StartX = bt_pr0->StartY = bt_pr0->SizeX = bt_pr0->SizeY = 0;
+				bt_pr1->StartX = bt->PosX;
+				bt_pr1->StartY = bt->PosY;
 
-				bt_pr1 -> SizeX = bt -> SizeX;
-				bt_pr1 -> SizeY = bt -> SizeY;
-			}
-			else {
-				if(bt_pr1) bt_pr1 -> StartX = bt_pr1 -> StartY = bt_pr1 -> SizeX = bt_pr1 -> SizeY = 0;
-				if(bt_pr0){
-					bt_pr0 -> StartX = bt -> PosX;
-					bt_pr0 -> StartY = bt -> PosY;
+				bt_pr1->SizeX = bt->SizeX;
+				bt_pr1->SizeY = bt->SizeY;
+			} else {
+				if (bt_pr1)
+					bt_pr1->StartX = bt_pr1->StartY = bt_pr1->SizeX = bt_pr1->SizeY = 0;
+				if (bt_pr0) {
+					bt_pr0->StartX = bt->PosX;
+					bt_pr0->StartY = bt->PosY;
 
-					bt_pr0 -> SizeX = bt -> SizeX;
-					bt_pr0 -> SizeY = bt -> SizeY;
+					bt_pr0->SizeX = bt->SizeX;
+					bt_pr0->SizeY = bt->SizeY;
 				}
 			}
 		}
 	}
 
-	if(flags & aMS_MOVED)
-		curMatrix -> clear_shadow_cells();
+	if (flags & aMS_MOVED)
+		curMatrix->clear_shadow_cells();
 
 	x = iMouseX;
 	y = iMouseY;
@@ -7443,402 +7661,416 @@ void actIntDispatcher::inv_mouse_move_quant(void)
 	float scaleX = XGR_Obj.get_screen_scale_x();
 	float scaleY = XGR_Obj.get_screen_scale_y();
 
-	ix = curIbs -> PosX / scaleX;
-	iy = curIbs -> PosY / scaleY;
+	ix = curIbs->PosX / scaleX;
+	iy = curIbs->PosY / scaleY;
 
-	isx = ix + curIbs -> SizeX * scaleX;
-	isy = iy + curIbs -> SizeY * scaleY;
+	isx = ix + curIbs->SizeX * scaleX;
+	isy = iy + curIbs->SizeY * scaleY;
 
-	if(x >= ix && x < isx && y >= iy && y < isy){
-		id = aciGetScreenItem(x,y);
-		if(id != -1){
+	if (x >= ix && x < isx && y >= iy && y < isy) {
+		id = aciGetScreenItem(x, y);
+		if (id != -1) {
 			p = get_item(id);
-			if(iP){
-				if(p){
-					iP -> free_list();
-					iP -> add_item(p->ID_ptr.c_str(),-1,aciCurColorScheme[FM_SELECT_COL]);
-					iP -> add_items(p -> numComments,p -> comments);
-					iP -> set_redraw();
-				}
-				else {
+			if (iP) {
+				if (p) {
+					iP->free_list();
+					iP->add_item(p->ID_ptr.c_str(), -1, aciCurColorScheme[FM_SELECT_COL]);
+					iP->add_items(p->numComments, p->comments);
+
+					iP->set_redraw();
+				} else {
 					XBuf = new XBuffer;
 					*XBuf < "Undefined item, ID = " <= id;
-					ptr = XBuf -> address();
-					iP -> free_list();
-					iP -> add_item(ptr,-1,aciCurColorScheme[FM_SELECT_COL]);
-					iP -> set_redraw();
+					ptr = XBuf->address();
+					iP->free_list();
+					iP->add_item(ptr, -1, aciCurColorScheme[FM_SELECT_COL]);
+					iP->set_redraw();
 					delete XBuf;
 				}
 			}
 		}
-		if(id == -1){
-			if(aciGetScreenMechos(x,y)){
-				if(iP -> items -> Size){
-					iP -> free_list();
-					iP -> set_redraw();
+		if (id == -1) {
+			if (aciGetScreenMechos(x, y)) {
+				if (iP->items->Size) {
+					iP->free_list();
+					iP->set_redraw();
 				}
-				if(curMatrix && curMatrix -> mech_name)
-					iP -> add_item(curMatrix -> mech_name,-1,aciCurColorScheme[FM_SELECT_COL]);
-			}
-			else {
-				if(iP -> items -> Size){
-					iP -> free_list();
-					iP -> set_redraw();
+				if (curMatrix && curMatrix->mech_name)
+					iP->add_item(curMatrix->mech_name, -1, aciCurColorScheme[FM_SELECT_COL]);
+			} else {
+				if (iP->items->Size) {
+					iP->free_list();
+					iP->set_redraw();
 				}
 			}
 		}
-	}
-	else {
-		if(curMatrix && curMatrix -> check_xy(iMouseX,iMouseY)){
-			if(flags & AS_INV_MOVE_ITEM){
-				x = iMouseX - curMatrix -> ScreenX - (curItem -> ShapeSizeX >> 1) + curItem -> ShapeCenterX;
-				y = iMouseY - curMatrix -> ScreenY - (curItem -> ShapeSizeY >> 1) + curItem -> ShapeCenterY;
+	} else {
+		if (curMatrix && curMatrix->check_xy(iMouseX, iMouseY)) {
+			if (flags & AS_INV_MOVE_ITEM) {
+				x = iMouseX - curMatrix->ScreenX - (curItem->ShapeSizeX >> 1) +
+					curItem->ShapeCenterX;
+				y = iMouseY - curMatrix->ScreenY - (curItem->ShapeSizeY >> 1) +
+					curItem->ShapeCenterY;
 
 				y /= aCellSize - (aCellSize >> 2);
 
-				if(y & 0x01) x -= (aCellSize >> 1);
+				if (y & 0x01)
+					x -= (aCellSize >> 1);
 				x /= aCellSize;
-			}
-			else {
-				x = iMouseX - curMatrix -> ScreenX;
-				y = iMouseY - curMatrix -> ScreenY;
+			} else {
+				x = iMouseX - curMatrix->ScreenX;
+				y = iMouseY - curMatrix->ScreenY;
 
 				y /= aCellSize - (aCellSize >> 2);
 
-				if(y & 0x01) x -= (aCellSize >> 1);
+				if (y & 0x01)
+					x -= (aCellSize >> 1);
 				x /= aCellSize;
 			}
 
-			if(x >= 0 && x < curMatrix -> SizeX && y >= 0 && y < curMatrix -> SizeY){
-				if(flags & AS_INV_MOVE_ITEM){
-					if(curMatrix -> check_fit(x,y,curItem)){
-						curMatrix -> put_item_shadow(x,y,curItem);
-					}
-					else {
-						p = curMatrix -> get_area_item(x,y,curItem);
-						if(p){
-							curMatrix -> remove_item(p,1);
-							if(curMatrix -> check_fit(x,y,curItem))
-								curMatrix -> put_item_shadow(x,y,curItem);
-							curMatrix -> put_item(p -> MatrixX,p -> MatrixY,p,1);
+			if (x >= 0 && x < curMatrix->SizeX && y >= 0 && y < curMatrix->SizeY) {
+				if (flags & AS_INV_MOVE_ITEM) {
+					if (curMatrix->check_fit(x, y, curItem)) {
+						curMatrix->put_item_shadow(x, y, curItem);
+					} else {
+						p = curMatrix->get_area_item(x, y, curItem);
+						if (p) {
+							curMatrix->remove_item(p, 1);
+							if (curMatrix->check_fit(x, y, curItem))
+								curMatrix->put_item_shadow(x, y, curItem);
+							curMatrix->put_item(p->MatrixX, p->MatrixY, p, 1);
 						}
 					}
-				}
-				else {
-					if(iP){
-						p = curMatrix -> get_item(x,y);
-						if(p){
-							if(iP -> items -> Size){
-								iP -> free_list();
-								iP -> set_redraw();
+				} else {
+					if (iP) {
+						p = curMatrix->get_item(x, y);
+						if (p) {
+							if (iP->items->Size) {
+								iP->free_list();
+								iP->set_redraw();
 							}
-							iP -> add_item(p->ID_ptr.c_str(),-1,aciCurColorScheme[FM_SELECT_COL]);
-							iP -> add_items(p -> numComments,p -> comments);
-							if(p -> pTemplate)
-								iP -> add_item(aciGetItemLoad(p,0));
-							if(p -> promptData && XGR_MouseObj.promptData){
-								if(!pr){
+							iP->add_item(p->ID_ptr.c_str(), -1, aciCurColorScheme[FM_SELECT_COL]);
+							if (p->ActiveState < 0) {
+								iP->add_items(p->numComments, p->comments);
+							} else {
+								if (p->ActiveState) {
+									iP->add_item(
+										p->ActiveText, -1, aciCurColorScheme[FM_SELECT_COL]);
+								} else {
+									iP->add_item(p->DeactiveText);
+								}
+							}
+							if (p->pTemplate)
+								iP->add_item(aciGetItemLoad(p, 0));
+							if (p->promptData && XGR_MouseObj.promptData) {
+								if (!pr) {
 									pr = new XGR_MousePromptData;
-									pr -> ID = ACI_ITEM_PROMPT;
-									XGR_MouseObj.promptData -> AddElement((XListElement*)pr);
+									pr->ID = ACI_ITEM_PROMPT;
+									XGR_MouseObj.promptData->AddElement((XListElement *)pr);
 								}
-								pr -> set_text(p -> promptData);
-								curMatrix -> get_item_coords(p,pr -> StartX,pr -> StartY,pr -> SizeX,pr -> SizeY);
+								pr->set_text(p->promptData);
+								curMatrix->get_item_coords(
+									p, pr->StartX, pr->StartY, pr->SizeX, pr->SizeY);
 							}
-						}
-						else {
-							if(!(flags & AS_INV_MOVE_ITEM)){
-								if(iP -> items -> Size){
-									iP -> free_list();
-									iP -> set_redraw();
+						} else {
+							if (!(flags & AS_INV_MOVE_ITEM)) {
+								if (iP->items->Size) {
+									iP->free_list();
+									iP->set_redraw();
 								}
 							}
 						}
 					}
 				}
 			}
-		}
-		else {
-			if(!(flags & AS_INV_MOVE_ITEM)){
-				if(iP){
-					if(iP -> items -> Size){
-						iP -> free_list();
-						iP -> set_redraw();
+		} else {
+			if (!(flags & AS_INV_MOVE_ITEM)) {
+				if (iP) {
+					if (iP->items->Size) {
+						iP->free_list();
+						iP->set_redraw();
 					}
 				}
 			}
 		}
 	}
-	if(flags & aMS_MOVED){
-		if(curMode == AS_INV_MODE && curMatrix && curMatrix -> check_redraw()){
-			curMatrix -> flags |= IM_REDRAW_SHADOW;
+	if (flags & aMS_MOVED) {
+		if (curMode == AS_INV_MODE && curMatrix && curMatrix->check_redraw()) {
+			curMatrix->flags |= IM_REDRAW_SHADOW;
 		}
 	}
 }
 
-void actIntDispatcher::inv_mouse_imove_quant(void)
-{
-	int mx,my,x,y;
-	invItem* p = NULL;
-	invItem* p1 = NULL;
-	iScreenObject* obj;
+void actIntDispatcher::inv_mouse_imove_quant(void) {
+	int mx, my, x, y;
+	invItem *p = NULL;
+	invItem *p1 = NULL;
+	iScreenObject *obj;
 
 	int cr = aciGetCurCredits();
 
-	XGR_MousePromptData* pr = NULL,*pr0 = NULL,*pr1,*avi_pr1,*avi_pr2;
-	if(XGR_MouseObj.promptData){
-		pr = XGR_MouseObj.promptData -> getData(ACI_NO_CASH_PROMPT);
-		pr0 = XGR_MouseObj.promptData -> getData(ACI_NO_CASH_PROMPT2);
-		pr1 = XGR_MouseObj.promptData -> getData(ACI_BT15_PROMPT);
+	XGR_MousePromptData *pr = NULL, *pr0 = NULL, *pr1, *avi_pr1, *avi_pr2;
+	if (XGR_MouseObj.promptData) {
+		pr = XGR_MouseObj.promptData->getData(ACI_NO_CASH_PROMPT);
+		pr0 = XGR_MouseObj.promptData->getData(ACI_NO_CASH_PROMPT2);
+		pr1 = XGR_MouseObj.promptData->getData(ACI_BT15_PROMPT);
 
-		avi_pr1 = XGR_MouseObj.promptData -> getData(ACI_AVI_PROMPT1);
-		if(avi_pr1){
-			avi_pr2 = XGR_MouseObj.promptData -> getData(ACI_AVI_PROMPT2);
-			if(!avi_pr2){
+		avi_pr1 = XGR_MouseObj.promptData->getData(ACI_AVI_PROMPT1);
+		if (avi_pr1) {
+			avi_pr2 = XGR_MouseObj.promptData->getData(ACI_AVI_PROMPT2);
+			if (!avi_pr2) {
 				avi_pr2 = new XGR_MousePromptData;
-				avi_pr2 -> ID = ACI_AVI_PROMPT2;
-				XGR_MouseObj.promptData -> AddElement((XListElement*)avi_pr2);
-				avi_pr2 -> set_text(aciSTR_PutThis);
+				avi_pr2->ID = ACI_AVI_PROMPT2;
+				XGR_MouseObj.promptData->AddElement((XListElement *)avi_pr2);
+				avi_pr2->set_text(aciSTR_PutThis);
 			}
-			obj = (iScreenObject*)curLocData -> objList[ACI_AVI_OBJ_ID];
-			if(flags & AS_INV_MOVE_ITEM){
-				avi_pr2 -> StartX = obj -> PosX;
-				avi_pr2 -> StartY = obj -> PosY;
+			obj = (iScreenObject *)curLocData->objList[ACI_AVI_OBJ_ID];
+			if (flags & AS_INV_MOVE_ITEM) {
+				avi_pr2->StartX = obj->PosX;
+				avi_pr2->StartY = obj->PosY;
 
-				avi_pr2 -> SizeX = obj -> SizeX;
-				avi_pr2 -> SizeY = obj -> SizeY;
+				avi_pr2->SizeX = obj->SizeX;
+				avi_pr2->SizeY = obj->SizeY;
 
-				avi_pr1 -> StartX = avi_pr1 -> StartY = 0;
-				avi_pr1 -> SizeX = avi_pr1 -> SizeY = 0;
-			}
-			else {
-				avi_pr1 -> StartX = obj -> PosX;
-				avi_pr1 -> StartY = obj -> PosY;
+				avi_pr1->StartX = avi_pr1->StartY = 0;
+				avi_pr1->SizeX = avi_pr1->SizeY = 0;
+			} else {
+				avi_pr1->StartX = obj->PosX;
+				avi_pr1->StartY = obj->PosY;
 
-				avi_pr1 -> SizeX = obj -> SizeX;
-				avi_pr1 -> SizeY = obj -> SizeY;
+				avi_pr1->SizeX = obj->SizeX;
+				avi_pr1->SizeY = obj->SizeY;
 
-				avi_pr2 -> StartX = avi_pr2 -> StartY = 0;
-				avi_pr2 -> SizeX = avi_pr2 -> SizeY = 0;
+				avi_pr2->StartX = avi_pr2->StartY = 0;
+				avi_pr2->SizeX = avi_pr2->SizeY = 0;
 			}
 		}
 	}
-	if(pr) pr -> StartX = pr -> StartY = pr -> SizeX = pr -> SizeY = 0;
+	if (pr)
+		pr->StartX = pr->StartY = pr->SizeX = pr->SizeY = 0;
 
-	if(!pr0){
+	if (!pr0) {
 		pr0 = new XGR_MousePromptData;
-		pr0 -> ID = ACI_NO_CASH_PROMPT2;
-		XGR_MouseObj.promptData -> AddElement((XListElement*)pr0);
-		pr0 -> set_text(aciSTR_NO_CASH);
+		pr0->ID = ACI_NO_CASH_PROMPT2;
+		XGR_MouseObj.promptData->AddElement((XListElement *)pr0);
+		pr0->set_text(aciSTR_NO_CASH);
 	}
 
-	if(secondMatrix){
-		obj = (iScreenObject*)iGetObject(iScrDisp->curScr->ID_ptr.c_str(),"Button15");
-		if(((uvsActInt*)secondMatrix -> uvsDataPtr) -> price > cr + aciGetCurMatrixPrice()){
-			if(pr0){
-				pr0 -> StartX = obj -> PosX;
-				pr0 -> StartY = obj -> PosY;
+	if (secondMatrix) {
+		obj = (iScreenObject *)iGetObject(iScrDisp->curScr->ID_ptr.c_str(), "Button15");
+		if (((uvsActInt *)secondMatrix->uvsDataPtr)->price > cr + aciGetCurMatrixPrice()) {
+			if (pr0) {
+				pr0->StartX = obj->PosX;
+				pr0->StartY = obj->PosY;
 
-				pr0 -> SizeX = obj -> SizeX;
-				pr0 -> SizeY = obj -> SizeY;
+				pr0->SizeX = obj->SizeX;
+				pr0->SizeY = obj->SizeY;
 			}
-			if(pr1){
-				pr1 -> StartX = 0;
-				pr1 -> StartY = 0;
+			if (pr1) {
+				pr1->StartX = 0;
+				pr1->StartY = 0;
 
-				pr1 -> SizeX = 0;
-				pr1 -> SizeY = 0;
+				pr1->SizeX = 0;
+				pr1->SizeY = 0;
 			}
-		}
-		else {
-			if(pr1){
-				pr1 -> StartX = obj -> PosX;
-				pr1 -> StartY = obj -> PosY;
+		} else {
+			if (pr1) {
+				pr1->StartX = obj->PosX;
+				pr1->StartY = obj->PosY;
 
-				pr1 -> SizeX = obj -> SizeX;
-				pr1 -> SizeY = obj -> SizeY;
+				pr1->SizeX = obj->SizeX;
+				pr1->SizeY = obj->SizeY;
 			}
-			if(pr0){
-				pr0 -> StartX = 0;
-				pr0 -> StartY = 0;
+			if (pr0) {
+				pr0->StartX = 0;
+				pr0->StartY = 0;
 
-				pr0 -> SizeX = 0;
-				pr0 -> SizeY = 0;
+				pr0->SizeX = 0;
+				pr0->SizeY = 0;
 			}
 		}
 	}
 
-	if(flags & aMS_MOVED){
-		if(curMatrix) curMatrix -> clear_shadow_cells();
-		if(secondMatrix) secondMatrix -> clear_shadow_cells();
+	if (flags & aMS_MOVED) {
+		if (curMatrix)
+			curMatrix->clear_shadow_cells();
+		if (secondMatrix)
+			secondMatrix->clear_shadow_cells();
 	}
 
 	mx = iMouseX;
 	my = iMouseY;
 
-	if(flags & AS_ISCREEN)
+	if (flags & AS_ISCREEN)
 		mx += iScreenOffs - 800;
 
-	if(flags & AS_INV_MOVE_ITEM){
-		if(curItem -> flags & INV_ITEM_NO_PAY && ((uvsActInt*)curItem -> uvsDataPtr) -> price > cr){
-			if(!pr){
+	if (flags & AS_INV_MOVE_ITEM) {
+		if (curItem->flags & INV_ITEM_NO_PAY && ((uvsActInt *)curItem->uvsDataPtr)->price > cr) {
+			if (!pr) {
 				pr = new XGR_MousePromptData;
-				pr -> ID = ACI_NO_CASH_PROMPT;
-				XGR_MouseObj.promptData -> AddElement((XListElement*)pr);
-				pr -> set_text(aciSTR_NO_CASH);
+				pr->ID = ACI_NO_CASH_PROMPT;
+				XGR_MouseObj.promptData->AddElement((XListElement *)pr);
+				pr->set_text(aciSTR_NO_CASH);
 			}
-			pr -> StartX = curMatrix -> ScreenX + iScreenOffs;
-			pr -> StartY = curMatrix -> ScreenY;
+			pr->StartX = curMatrix->ScreenX + iScreenOffs;
+			pr->StartY = curMatrix->ScreenY;
 
-			pr -> SizeX = curMatrix -> ScreenSizeX;
-			pr -> SizeY = curMatrix -> ScreenSizeY;
+			pr->SizeX = curMatrix->ScreenSizeX;
+			pr->SizeY = curMatrix->ScreenSizeY;
 		}
 	}
 
-	if(curMatrix && curMatrix -> check_xy(mx,my)){
-		if(flags & AS_INV_MOVE_ITEM){
-			x = iMouseX - curMatrix -> ScreenX - (curItem -> ShapeSizeX >> 1) + curItem -> ShapeCenterX;
-			y = iMouseY - curMatrix -> ScreenY - (curItem -> ShapeSizeY >> 1) + curItem -> ShapeCenterY;
+	if (curMatrix && curMatrix->check_xy(mx, my)) {
+		if (flags & AS_INV_MOVE_ITEM) {
+			x = iMouseX - curMatrix->ScreenX - (curItem->ShapeSizeX >> 1) + curItem->ShapeCenterX;
+			y = iMouseY - curMatrix->ScreenY - (curItem->ShapeSizeY >> 1) + curItem->ShapeCenterY;
 
 			x += iScreenOffs - 800;
 
 			y /= aCellSize - (aCellSize >> 2);
 
-			if(y & 0x01) x -= (aCellSize >> 1);
+			if (y & 0x01)
+				x -= (aCellSize >> 1);
 			x /= aCellSize;
-		}
-		else {
-			x = iMouseX - curMatrix -> ScreenX;
-			y = iMouseY - curMatrix -> ScreenY;
+		} else {
+			x = iMouseX - curMatrix->ScreenX;
+			y = iMouseY - curMatrix->ScreenY;
 
 			x += iScreenOffs - 800;
 
 			y /= aCellSize - (aCellSize >> 2);
 
-			if(y & 0x01) x -= (aCellSize >> 1);
+			if (y & 0x01)
+				x -= (aCellSize >> 1);
 			x /= aCellSize;
 		}
 
-		if(x >= 0 && x < curMatrix -> SizeX && y >= 0 && y < curMatrix -> SizeY){
-			if(flags & AS_INV_MOVE_ITEM){
-				if(curMatrix -> check_fit(x,y,curItem)){
-					curMatrix -> put_item_shadow(x,y,curItem);
-				}
-				else {
-					p = curMatrix -> get_area_item(x,y,curItem);
-					if(p){
-						curMatrix -> remove_item(p,1);
-						if(curMatrix -> check_fit(x,y,curItem))
-							curMatrix -> put_item_shadow(x,y,curItem);
-						curMatrix -> put_item(p -> MatrixX,p -> MatrixY,p,1);
+		if (x >= 0 && x < curMatrix->SizeX && y >= 0 && y < curMatrix->SizeY) {
+			if (flags & AS_INV_MOVE_ITEM) {
+				if (curMatrix->check_fit(x, y, curItem)) {
+					curMatrix->put_item_shadow(x, y, curItem);
+				} else {
+					p = curMatrix->get_area_item(x, y, curItem);
+					if (p) {
+						curMatrix->remove_item(p, 1);
+						if (curMatrix->check_fit(x, y, curItem))
+							curMatrix->put_item_shadow(x, y, curItem);
+						curMatrix->put_item(p->MatrixX, p->MatrixY, p, 1);
 					}
 				}
-			}
-			else {
-				if(iP){
-					p = curMatrix -> get_item(x,y);
-					if(iP -> items -> Size){
-						iP -> free_list();
-						iP -> set_redraw();
+			} else {
+				if (iP) {
+					p = curMatrix->get_item(x, y);
+					if (iP->items->Size) {
+						iP->free_list();
+						iP->set_redraw();
 					}
-					if(p){
-						p1 = get_iitem(p -> ID);
-						iP -> add_item(p1->ID_ptr.c_str(),-1,aciCurColorScheme[FM_SELECT_COL]);
-						iP -> add_items(p1 -> numComments,p1 -> comments);
-						if(p1 -> pTemplate)
-							iP -> add_item(aciGetItemLoad(p,1));
-						if(!uvsCurrentWorldUnable)
-							iP -> add_item(aciGetPrice((iListElement*)p,ITEMS_MODE,1));
+					if (p) {
+						p1 = get_iitem(p->ID);
+						iP->add_item(p1->ID_ptr.c_str(), -1, aciCurColorScheme[FM_SELECT_COL]);
+						if (p->ActiveState < 0) {
+							iP->add_items(p1->numComments, p1->comments);
+						} else {
+							if (p->ActiveState) {
+								iP->add_item(p->ActiveText, -1, aciCurColorScheme[FM_SELECT_COL]);
+							} else {
+								iP->add_item(p->DeactiveText);
+							}
+						}
+						if (p1->pTemplate)
+							iP->add_item(aciGetItemLoad(p, 1));
+						if (!uvsCurrentWorldUnable)
+							iP->add_item(aciGetPrice((iListElement *)p, ITEMS_MODE, 1));
 					}
 				}
 			}
 		}
-	}
-	else {
-		if(secondMatrix && secondMatrix -> check_xy(mx,my)){
-			if(flags & AS_INV_MOVE_ITEM){
-				x = iMouseX - secondMatrix -> ScreenX - (curItem -> ShapeSizeX >> 1) + curItem -> ShapeCenterX;
-				y = iMouseY - secondMatrix -> ScreenY - (curItem -> ShapeSizeY >> 1) + curItem -> ShapeCenterY;
+	} else {
+		if (secondMatrix && secondMatrix->check_xy(mx, my)) {
+			if (flags & AS_INV_MOVE_ITEM) {
+				x = iMouseX - secondMatrix->ScreenX - (curItem->ShapeSizeX >> 1) +
+					curItem->ShapeCenterX;
+				y = iMouseY - secondMatrix->ScreenY - (curItem->ShapeSizeY >> 1) +
+					curItem->ShapeCenterY;
 
 				x += iScreenOffs - 800;
 
 				y /= aCellSize - (aCellSize >> 2);
 
-				if(y & 0x01) x -= (aCellSize >> 1);
+				if (y & 0x01)
+					x -= (aCellSize >> 1);
 				x /= aCellSize;
-			}
-			else {
-				x = iMouseX - secondMatrix -> ScreenX;
-				y = iMouseY - secondMatrix -> ScreenY;
+			} else {
+				x = iMouseX - secondMatrix->ScreenX;
+				y = iMouseY - secondMatrix->ScreenY;
 
 				x += iScreenOffs - 800;
 
 				y /= aCellSize - (aCellSize >> 2);
 
-				if(y & 0x01) x -= (aCellSize >> 1);
+				if (y & 0x01)
+					x -= (aCellSize >> 1);
 				x /= aCellSize;
 			}
 
-			if(x >= 0 && x < secondMatrix -> SizeX && y >= 0 && y < secondMatrix -> SizeY){
-				if(flags & AS_INV_MOVE_ITEM){
-					if(secondMatrix -> check_fit(x,y,curItem)){
-						secondMatrix -> put_item_shadow(x,y,curItem);
-					}
-					else {
-						p = secondMatrix -> get_area_item(x,y,curItem);
-						if(p){
-							secondMatrix -> remove_item(p,1);
-							if(secondMatrix -> check_fit(x,y,curItem))
-								secondMatrix -> put_item_shadow(x,y,curItem);
-							secondMatrix -> put_item(p -> MatrixX,p -> MatrixY,p,1);
+			if (x >= 0 && x < secondMatrix->SizeX && y >= 0 && y < secondMatrix->SizeY) {
+				if (flags & AS_INV_MOVE_ITEM) {
+					if (secondMatrix->check_fit(x, y, curItem)) {
+						secondMatrix->put_item_shadow(x, y, curItem);
+					} else {
+						p = secondMatrix->get_area_item(x, y, curItem);
+						if (p) {
+							secondMatrix->remove_item(p, 1);
+							if (secondMatrix->check_fit(x, y, curItem))
+								secondMatrix->put_item_shadow(x, y, curItem);
+							secondMatrix->put_item(p->MatrixX, p->MatrixY, p, 1);
 						}
 					}
-				}
-				else {
-					if(iP){
-						p = secondMatrix -> get_item(x,y);
-						if(iP -> items -> Size){
-							iP -> free_list();
-							iP -> set_redraw();
+				} else {
+					if (iP) {
+						p = secondMatrix->get_item(x, y);
+						if (iP->items->Size) {
+							iP->free_list();
+							iP->set_redraw();
 						}
-						if(p){
-							iP -> add_item(p->ID_ptr.c_str(),-1,aciCurColorScheme[FM_SELECT_COL]);
-							iP -> add_items(p -> numComments,p -> comments);
-							if(p -> pTemplate)
-								iP -> add_item(aciGetItemLoad(p,1));
-							if(!uvsCurrentWorldUnable)
-								iP -> add_item(aciGetPrice((iListElement*)p,ITEMS_MODE,1));
+						if (p) {
+							iP->add_item(p->ID_ptr.c_str(), -1, aciCurColorScheme[FM_SELECT_COL]);
+							iP->add_items(p->numComments, p->comments);
+							if (p->pTemplate)
+								iP->add_item(aciGetItemLoad(p, 1));
+							if (!uvsCurrentWorldUnable)
+								iP->add_item(aciGetPrice((iListElement *)p, ITEMS_MODE, 1));
 						}
 					}
 				}
 			}
-		}
-		else {
-			if(!(flags & AS_INV_MOVE_ITEM)){
-				if(iP){
-					if(iP -> items -> Size){
-						iP -> free_list();
-						iP -> set_redraw();
+		} else {
+			if (!(flags & AS_INV_MOVE_ITEM)) {
+				if (iP) {
+					if (iP->items->Size) {
+						iP->free_list();
+						iP->set_redraw();
 					}
 				}
 			}
 		}
 	}
 
-	if(flags & aMS_MOVED){
-		if(curMatrix && curMatrix -> check_redraw()){
-			curMatrix -> flags |= IM_REDRAW_SHADOW;
+	if (flags & aMS_MOVED) {
+		if (curMatrix && curMatrix->check_redraw()) {
+			curMatrix->flags |= IM_REDRAW_SHADOW;
 		}
-		if(secondMatrix && secondMatrix -> check_redraw()){
-			secondMatrix -> flags |= IM_REDRAW_SHADOW;
+		if (secondMatrix && secondMatrix->check_redraw()) {
+			secondMatrix->flags |= IM_REDRAW_SHADOW;
 		}
 	}
-	if(iP){
-		if(!iP -> items -> Size){
-			aciInitMechosInfo(curMatrix,iP);
+	if (iP) {
+		if (!iP->items->Size) {
+			aciInitMechosInfo(curMatrix, iP);
 		}
 	}
 }
+
 
 int invMatrix::check_redraw(void)
 {
@@ -8086,6 +8318,151 @@ void actIntDispatcher::free_matrix(invMatrix* p)
 	}
 	delete p;
 //	  freeMatrixList -> connect((iListElement*)p);
+}
+
+void actIntDispatcher::TryCraft(int ResultID, int x, int y) {
+	invItem *SecondPart = 0;
+	invItem *ResultItem = 0;
+	invItem *CloneBuffer = 0;
+
+	SecondPart = curMatrix->get_item(x, y);
+
+	if (SecondPart->ID == curItem->CraftWithID) {
+		if (curItem->menu) {
+			remove_menu_item((fncMenu *)curItem->menu);
+		}
+		((uvsActInt *)curItem->uvsDataPtr)->delink(GGamer);
+
+		free_item(curItem);
+
+		curMatrix->remove_item(SecondPart);
+
+		((uvsActInt *)SecondPart->uvsDataPtr)->delink(GGamer);
+
+		free_item(SecondPart);
+
+		if (flags & AS_ISCREEN) {
+			CloneBuffer = get_iitem(ResultID);
+			if (!CloneBuffer)
+				RVERR("Cant get craft result item...", "ISCREEN");
+		} else {
+			CloneBuffer = get_item(ResultID);
+			if (!CloneBuffer)
+				RVERR("Cant get craft result item...", "ACTION");
+		}
+
+		ResultItem = aScrDisp->alloc_item();
+		CloneBuffer->clone(ResultItem);
+		/*
+		aScrDisp->curItem = ResultItem;
+		set_mouse_cursor(
+			ResultItem->frame,
+			ResultItem->ScreenSizeX,
+			ResultItem->ScreenSizeY);
+		*/
+		aScrDisp->flags |= AS_INV_MOVE_ITEM;
+
+		listElem *GamerElement = (listElem *)GGamer;
+		if (flags & AS_ISCREEN) {
+			uvsActInt *ItemUvsData = (uvsActInt *)CloneBuffer->uvsDataPtr;
+
+			if (!ItemUvsData)
+				RVERR("Null uvsDataPtr...", "\0");
+
+			ItemUvsData->delink(GItem);
+			ItemUvsData->link(GamerElement);
+
+			GGamer = (uvsActInt *)GamerElement;
+
+			ResultItem->uvsDataPtr = ItemUvsData;
+
+			ItemUvsData->pos_x = ItemUvsData->pos_y = -1;
+		}
+
+		curMatrix->set_redraw();
+
+		ResultItem->flags |= INV_ITEM_NEW;
+		ResultItem->MatrixX = ResultItem->MatrixY = -1;
+
+		directSetMoveItem(ResultItem, curMatrix);
+
+		SOUND_SELECT();
+		return;
+	}
+	SOUND_RAFFA_SHOT(0);
+}
+
+void actIntDispatcher::TryCharge(int x, int y) 
+{
+	invItem *SecondItem = 0;
+	// Revangers::Charging with ghOrbulator
+
+	int *Charge = 0;
+	int *SecCharge = 0;
+	int MaxCharge = 0;
+	int Delta = 0;
+	int SecID = -1;
+
+#ifdef DYNAMIC_PTR
+	if (curItem->uvsDataPtr) {
+		Charge = &((uvsActInt *)(curItem->uvsDataPtr))->param2;
+	} else {
+		Charge = &(curItem->item_ptr->data1);
+	}
+#else
+	if (flags & AS_ISCREEN) {
+		Charge = &((uvsActInt *)(curItem->uvsDataPtr))->param2;
+	} else {
+		Charge = &(curItem->item_ptr->data1);
+	}
+#endif
+	if (curItem->ID == ACI_GHORBULATOR) {
+		if (*Charge) {
+			SecondItem = curMatrix->get_area_item(x, y, curItem);
+			if (!SecondItem) {
+				RVERR(
+					"Cant get item in inventory area...",
+					flags & AS_ISCREEN ? "ISCREEN" : "ACTION");
+			}
+
+#ifdef DYNAMIC_PTR
+			if (SecondItem->uvsDataPtr) {
+				SecID = ((uvsActInt *)SecondItem->uvsDataPtr)->type;
+				SecCharge = &((uvsActInt *)SecondItem->uvsDataPtr)->param2;
+			} else if (SecondItem->item_ptr) {
+				SecID = (SecondItem->item_ptr)->type;
+				SecCharge = &(SecondItem->item_ptr)->data1;
+			} else {
+				RVERR("Unlinked item in inventory... ", flags & AS_ISCREEN ? "ISCREEN" : "ACTION");
+			}
+#else
+			if (flags & AS_ISCREEN) {
+				SecID = ((uvsActInt *)SecondItem->uvsDataPtr)->type ;
+				SecCharge = &((uvsActInt *)SecondItem->uvsDataPtr)->param2;
+			} else {
+				SecID = (SecondItem->item_ptr)->type ;
+				SecCharge = &(SecondItem->item_ptr)->data1;
+			}
+#endif
+			SecID = ActInt_to_Item(SecID);
+			MaxCharge = uvsItemTable[SecID]->param2;
+
+			switch (uvsItemTable[SecID]->family) {
+			default:
+				SOUND_FAILEDPASS();
+				break;
+			case ItemFamily::Ghorb:
+				if (*SecCharge < MaxCharge) {
+					Delta = MaxCharge - *SecCharge;
+					Delta = Delta > *Charge ? *Charge : Delta;
+					*SecCharge += Delta;
+					*Charge -= Delta;
+					SOUND_CHARGE_GHORB();
+				}
+				break;
+			}
+		}
+	}
 }
 
 invItem* actIntDispatcher::get_item_ptr(int id)
@@ -9794,7 +10171,7 @@ void actIntDispatcher::save_items(void)
 
 	fh.open("actint/temp/i_items.bat",XS_OUT);
 	fh < "@echo off\r\n";
-	for(i = 1; i < ACI_MAX_TYPE; i ++){
+	for(i = 1; i < ACI_MAX_TYPE+1; i ++){
 		p = get_iitem(i);
 		if(p){
 			p -> init();
@@ -9815,3 +10192,4 @@ void invItem::set_template(char* p)
 	pTemplate = new char[sz];
 	strcpy(pTemplate,p);
 }
+

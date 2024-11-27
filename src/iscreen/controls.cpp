@@ -19,6 +19,7 @@ struct iKeyControls
 	int* keyCodes;
 	int* defaultCodes;
 	int* flags;
+	bool *pressed;
 
 	void init(void);
 	void reset(void);
@@ -65,6 +66,16 @@ int iGetKeyID(int key)
 	if(iControlsObj)
 		return iControlsObj -> GetID(key);
 	return -1;
+}
+
+
+int iKeyPressedOnce(int id) {
+	bool OldState = iControlsObj->pressed[id];
+	bool NewState = iKeyPressed(id);
+
+	iControlsObj->pressed[id] = NewState;
+
+	return (NewState && !OldState);
 }
 
 int iCheckKeyID(int id,int key)
@@ -139,6 +150,8 @@ void iKeyControls::init(void)
 //	  addDefaultCode(iKEY_VERTICAL_THRUST,'Z');
 	addDefaultCode(iKEY_JOYSTICK_SWITCH,VK_BUTTON_1);
 	setFlag(iKEY_JOYSTICK_SWITCH,iKEY_NO_RESET);
+
+	addDefaultCode(iKEY_CMD, SDL_SCANCODE_KP_0);
 
 	reset();
 }
@@ -232,10 +245,12 @@ iKeyControls::iKeyControls(void)
 	keyCodes = new int[iKEY_OBJECT_SIZE * iKEY_MAX_ID];
 	defaultCodes = new int[iKEY_OBJECT_SIZE * iKEY_MAX_ID];
 	flags = new int[iKEY_MAX_ID];
+	pressed = new bool[iKEY_MAX_ID];
 
 	memset(keyCodes,0,iKEY_OBJECT_SIZE * iKEY_MAX_ID * sizeof(int));
 	memset(defaultCodes,0,iKEY_OBJECT_SIZE * iKEY_MAX_ID * sizeof(int));
 	memset(flags,0,iKEY_MAX_ID * sizeof(int));
+	memset(pressed, 0, iKEY_MAX_ID);
 }
 
 void iSaveControls(void)

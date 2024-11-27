@@ -1346,4 +1346,15 @@ inline DBM DBM::operator- (double w) const
 	return m;
 }
 
+namespace ft {
+extern const double fPI;
+
+float rad2Deg(float rads);
+float deg2Rad(float degs);
+
+DBV stepVec(const DBV &vec, float angle, float distance);
+float distVec(const DBV &beg, const DBV &end);
+float vecAng(const DBV &beg, const DBV &end);
+} // namespace ft
+
 #endif

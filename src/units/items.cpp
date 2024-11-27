@@ -41,6 +41,8 @@
 #include "../sound/hsound.h"
 #include "magnum.h"
 
+#include "../WDisp.h"
+
 
 extern int RAM16;
 extern iGameMap* curGMap;
@@ -390,63 +392,114 @@ void Item2ShopAction(int type)
 	};
 };
 
-void ItemsDispatcher::Quant(void)
-{
-	GeneralObject* n;
-	StuffObject* p;
-	StuffObject* np;
-	StuffObject* pp;
-	VangerUnit* v;	
+void ItemsDispatcher::Quant(void) {
+	GeneralObject *n;
+	StuffObject *p;
+	StuffObject *np;
+	StuffObject *pp;
+	VangerUnit *v;
+	PersData *PData;
+	bool Terminate = 0;
 
-	
-	if(NetworkON) CryptQuant();
+	if (NetworkON)
+		CryptQuant();
 
 	NumVisibleItem = 0;
 	n = Tail;
-	while(n){
+	while (n) {
 		n->Quant();
 		n = n->NextTypeList;
-	};	
+	};
 
-	p = (StuffObject*)Tail;
-	while(p){
-		np = (StuffObject*)(p->NextTypeList);
-		if(p->Status & SOBJ_DISCONNECT)	DeleteItem(p);
-		else{
-			if(p->Status & SOBJ_LINK){
+	p = (StuffObject *)Tail;
+	while (p) {
+		np = (StuffObject *)(p->NextTypeList);
+		if (p->Status & SOBJ_DISCONNECT)
+			DeleteItem(p);
+		else {
+			if (p->Status & SOBJ_LINK) {
 				p->Status &= ~SOBJ_LINK;
-				if(p->Status & SOBJ_WAIT_CONFIRMATION)
+				if (p->Status & SOBJ_WAIT_CONFIRMATION)
 					p->Owner = NULL;
-				else{
-					v = (VangerUnit*)(p->Owner);
-					switch(v->CheckInDevice(p)){
-						case CHECK_DEVICE_IN:
+				else {
+					v = (VangerUnit *)(p->Owner);
+					// if (v->Status & SOBJ_ACTIVE) {
+					
+					switch (p->uvsDeviceType) {
+					case UVS_ITEM_TYPE::HOTBEEB:
+						if (!p->ActIntBuffer.ActiveState)
+							break;
+						PData = PersDataList[PersDataType::LandMine];
+						v->BulletCollision(((LandMineData *)PData)->DamagePower, p);
+						v->impulse((v->R - p->R), ((LandMineData *)PData)->ImpulsePower);
+						CreateDestroyEffect(
+							p->R_curr,
+							((LandMineData *)PData)->CraterType,
+							DT_DEFORM02,
+							DEFORM_WATER_ONLY,
+							-1,
+							((LandMineData *)PData)->ExplodeSprite);
+
+						MapD.CreateCrater(
+							p->R_curr, ((LandMineData *)PData)->CraterType);
+						Terminate = 1;
+						DeleteItem(p);
+						break;
+					case UVS_ITEM_TYPE::HOTBAG:
+						if (!p->ActIntBuffer.ActiveState)
+							break;
+						PData = PersDataList[PersDataType::LandMineBag];
+						v->BulletCollision(((LandMineBagData *)PData)->DamagePower, p);
+						v->impulse((v->R - p->R), ((LandMineBagData *)PData)->ImpulsePower);
+
+						CreateDestroyEffect(
+							p->R_curr,
+							((LandMineBagData *)PData)->CraterType,
+							DT_DEFORM02,
+							DEFORM_WATER_ONLY,
+							-1,
+							((LandMineBagData *)PData)->ExplodeSprite);
+
+						MapD.CreateCrater(p->R_curr, ((LandMineBagData *)PData)->CraterType);
+						Terminate = 1;
+						DeleteItem(p);
+						break;
+					}
+					//}
+
+					if (Terminate)
+						continue;
+					
+					switch (v->CheckInDevice(p)) {
+					case CHECK_DEVICE_IN:
+
+						if (v->Status & SOBJ_ACTIVE) {
 							p->DeviceIn();
-							PUT_GLOBAL_EVENT(AI_EVENT_CAPTURE,p->ID,p,v);
-							if(v->Status & SOBJ_ACTIVE){
-								p->ActIntBuffer.slot = -1;
-								aciSendEvent2actint(ACI_PUT_ITEM,&(p->ActIntBuffer));
-								if(ActD.Active && v == ActD.Active)
-									SOUND_TAKE_ITEM(getDistX(ActD.Active->R_curr.x,p->R_curr.x))
-							};						
-							break;
-						case CHECK_DEVICE_ADD:
-							ObjectDestroy(p);
-							pp = v->DeviceData;
-							while(pp){
-								if(pp->uvsDeviceType == p->uvsDeviceType){
-									pp->ActIntBuffer.data1+= p->ActIntBuffer.data1;
-									break;
-								};
-								pp = pp->NextDeviceList;
+							PUT_GLOBAL_EVENT(AI_EVENT_CAPTURE, p->ID, p, v);
+
+							p->ActIntBuffer.slot = -1;
+							aciSendEvent2actint(ACI_PUT_ITEM, &(p->ActIntBuffer));
+							if (ActD.Active && v == ActD.Active)
+								SOUND_TAKE_ITEM(getDistX(ActD.Active->R_curr.x, p->R_curr.x))
+						};
+						break;
+					case CHECK_DEVICE_ADD:
+						ObjectDestroy(p);
+						pp = v->DeviceData;
+						while (pp) {
+							if (pp->uvsDeviceType == p->uvsDeviceType) {
+								pp->ActIntBuffer.data1 += p->ActIntBuffer.data1;
+								break;
 							};
-							DeleteItem(p);
-							if(ActD.Active && v == ActD.Active)
-								SOUND_TAKE_ITEM(getDistX(ActD.Active->R_curr.x,p->R_curr.x))						
-							break;
-						case CHECK_DEVICE_OUT:
-							p->Owner = NULL;
-							break;
+							pp = pp->NextDeviceList;
+						};
+						DeleteItem(p);
+						if (ActD.Active && v == ActD.Active)
+							SOUND_TAKE_ITEM(getDistX(ActD.Active->R_curr.x, p->R_curr.x))
+						break;
+					case CHECK_DEVICE_OUT:
+						p->Owner = NULL;
+						break;
 					};
 				};
 			};
@@ -542,7 +595,14 @@ void StuffObject::Quant(void)
 			LightData = NULL;
 		};
 	};
-
+	StuffObject *Buffer;
+	int i;
+	float delta;
+	float ang = 0;
+	int bsize;
+	float imp;
+	DBV ImpVec;
+	Vector nextPos;
 	if(Visibility == VISIBLE){
 		ItemD.NumVisibleItem++;
 		switch(ActIntBuffer.type){
@@ -597,7 +657,34 @@ void StuffObject::Quant(void)
 					EffD.CreateDeform(R_curr,DEFORM_ALL,PASSING_WAVE_PROCESS);
 					device_modulation = 0;
 				};
-				break;				 
+				break;	
+			case ACI_HOTBAG:
+				if (dynamic_state & GROUND_COLLISION && ActIntBuffer.ActiveState) {
+					bsize = ((LandMineBagData *)PersDataList[PersDataType::LandMineBag])->BunchSize;
+					if (bsize)
+						delta = 360 / (float)bsize;
+					imp = ((LandMineBagData *)PersDataList[PersDataType::LandMineBag])->BunchImpulse;
+					for (i = 0; i < bsize; i++) {
+						Buffer = new StuffObject(*ItemD.StuffItemLink[UVS_ITEM_TYPE::HOTBEEB]);
+						nextPos = R;
+						nextPos = ft::stepVec(nextPos, ang, 7);
+
+						Buffer->CreateStuff(
+							nextPos,
+							ItemD.StuffItemLink[UVS_ITEM_TYPE::HOTBEEB],
+							STUFF_CREATE_TRACK);
+
+						ImpVec = ft::stepVec(DBV(0, 0, imp / 5), ang, imp);
+
+						Buffer->V = ImpVec;
+
+						Buffer->ActIntBuffer.ActiveState = 1;
+						ang += delta;
+					}
+					Status |= SOBJ_DISCONNECT;
+					return;
+				}
+				break;
 			default:
 				if((ActIntBuffer.type == ACI_ROTTEN_KERNOBOO || ActIntBuffer.type == ACI_ROTTEN_PIPETKA || ActIntBuffer.type == ACI_ROTTEN_WEEZYK || ActIntBuffer.type == ACI_DEAD_ELEECH) && (dynamic_state & GROUND_COLLISION))
 					Status |= SOBJ_DISCONNECT;
@@ -1288,10 +1375,10 @@ void BulletObject::CreateBullet(Vector fv,Vector tv,GeneralObject* target,WorldB
  };
 
 
-void BulletObject::CreateBullet(GunSlot* p,WorldBulletTemplate* n)
+void BulletObject::CreateBullet(GunSlot* p,WorldBulletTemplate* n, Vector firePos, DBM fireMatrix)
 {
 	int d;
-	R_prev = R_curr = p->vFire;
+	R_prev = R_curr = firePos;
 	Status = 0;
 	GetVisible();
 
@@ -1323,9 +1410,9 @@ void BulletObject::CreateBullet(GunSlot* p,WorldBulletTemplate* n)
 	if(BulletMode & BULLET_CONTROL_MODE::SPEED) Speed += (int)round(p->RealSpeed / GAME_TIME_COEFF);
 
 	if(BulletID == BULLET_TYPE_ID::LASER)
-		vDelta = Vector(Speed,(3 - (int)(RND(6))),0)*p->mFire; //machotine bullet dispersion
+		vDelta = Vector(Speed, (3 - (int)(RND(6))), 0) * fireMatrix; // machotine bullet dispersion
 	else 
-		vDelta = Vector(Speed,0,0)*p->mFire;
+		vDelta = Vector(Speed,0,0)*fireMatrix;
 
 	if(TargetObject && (BulletMode & BULLET_CONTROL_MODE::AIM)){
 		vDelta = Vector(getDistX(TargetObject->R_curr.x,R_curr.x),getDistY(TargetObject->R_curr.y,R_curr.y),TargetObject->R_curr.z - R_curr.z);
@@ -1635,7 +1722,10 @@ void BulletObject::Touch(GeneralObject* p)
 
 		if(!(BulletMode & BULLET_CONTROL_MODE::UNTOUCH))				
 			Event(BULLET_EVENT_ID::TOUCH);
-	};
+	} else if (p->ID == ID_SKYFARMER) {
+		if (!(BulletMode & BULLET_CONTROL_MODE::UNTOUCH))
+			Event(BULLET_EVENT_ID::TOUCH);
+	}
 	R_prev = vTail;
 };
 
@@ -1807,10 +1897,10 @@ void JumpBallObject::Init(void)
 	Status = SOBJ_DISCONNECT;
 };
 
-void JumpBallObject::CreateBullet(GunSlot* p,WorldBulletTemplate* n)
+void JumpBallObject::CreateBullet(GunSlot* p,WorldBulletTemplate* n, Vector firePos, DBM fireMatrix)
 {
 	Vector vCheck;
-	R_prev = R_curr = p->vFire;
+	R_prev = R_curr = firePos;
 	Status = 0;
 
 	DataID = n->ID;
@@ -1833,10 +1923,10 @@ void JumpBallObject::CreateBullet(GunSlot* p,WorldBulletTemplate* n)
 
 	if(Mode == BULLET_TARGET_MODE::CONTROL){
 		vCheck = Vector(-(n->Speed),0,0)*DBM((int)(PI/4 - RND(PI/2)),Z_AXIS);
-		vCheck *= p->mFire;
+		vCheck *= fireMatrix;
 		set_body_color(COLORS_IDS::MATERIAL_5);
 	}else{
-		vCheck = Vector(n->Speed,0,0)*p->mFire;
+		vCheck = Vector(n->Speed,0,0)*fireMatrix;
 	};
 	vCheck *= n->LifeTime + Owner->Speed;
 	vCheck /= n->Speed;
@@ -1851,6 +1941,7 @@ void JumpBallObject::Quant(void)
 	Vector vCheck;
 	StaticObject* st;
 	VangerFunctionType* g;
+
 
 	t = Visibility;
 	GetVisible();
@@ -1875,6 +1966,42 @@ void JumpBallObject::Quant(void)
 		analysis();
 		cycleTor(R_curr.x,R_curr.y);
 		if(dynamic_state & GROUND_COLLISION){
+			/*
+			Status |= SOBJ_DISCONNECT;
+			
+			if (Control & BULLET_CONTROL_MODE::EARTHBORNER) {
+				if (!EMData) {
+					RVERR(
+						"Weapon has earthborner flag, but has no personal data",
+						"JumpBallObject::Quant()");
+				}
+				int mapX;
+				int mapY;
+				int startX = XCYCL(R_curr.x);
+				int startY = YCYCL(R_curr.y);
+				float dist;
+				int hRad = EMData->DirtHillRadius;
+				DBV startVec = DBV(startX, startY, R_curr.z);
+				for (int x = R_curr.x - hRad; x < R_curr.x + hRad; x++) {
+					for (int y = R_curr.y - hRad; y < R_curr.y + hRad; y++) {
+						mapX = XCYCL(x);
+						mapY = YCYCL(y);
+						dist = ft::distVec(DBV(mapX, mapY, R_curr.z), startVec);
+
+						if (dist > hRad)
+							continue;
+
+						if (vMap->lineT[mapY][mapX] <= 255 - dist)
+							vMap->lineT[mapY][mapX] += 255 - dist;
+						else
+							vMap->lineT[mapY][mapX] = 255;
+						vMap->lineTcolor[mapY][mapX] = 88 + ((255 - dist) / 16);
+					}
+				}
+				regRender(R_curr.x - hRad, R_curr.y - hRad, R_curr.x + hRad, R_curr.y + hRad);
+				return;
+			}
+			*/
 			y0 = R_curr.y - EXPLOSION_BARELL_RADIUS;
 			y1 = R_curr.y + EXPLOSION_BARELL_RADIUS;
 			i = FindFirstStatic(y0,y1,(StaticObject**)TntSortedData,TntTableSize);
@@ -1966,7 +2093,7 @@ int Name2Int(char* name,const char* key[],int max)
 			break;
 		};
 	if(n == -1)
-		ErrH.Abort("Bad Name 2 Int");
+		ErrH.Abort("Bad Name 2 Int",1, -1, name);
 	return n;
 };
 
@@ -2036,7 +2163,7 @@ void SkyFarmerObject::CreateSkyFarmer(int x_pos,int y_pos,int x_speed,int y_spee
 	nTarget = 1 + RND(SkyFarmerWayTableSize - 2);
 	TargetObject = FindFarmer(nTarget);
 
-	R_prev = R_curr = Vector(TargetObject->R_curr.x,TargetObject->R_curr.y,0);
+	R_prev = R_curr = Vector(x_pos, y_pos, 0); // Vector(TargetObject->R_curr.x,TargetObject->R_curr.y,0);
 	Status = 0;
 	cycleTor(R_curr.x,R_curr.y);
 	GetVisible();
@@ -2096,44 +2223,100 @@ SensorDataType* SkyFarmerObject::FindFarmer(int n)
 	return NULL;
 };
 
-void SkyFarmerObject::Quant(void)
-{
+
+void SkyFarmerObject::Touch(GeneralObject *obj) {
+	// std::cout << "Skyfarmer is touchin somethin with id " << obj->ID << '\n';
+	if (obj->ID == ID_BULLET) {
+		Contusion = 1;
+		ImpactBuffer = V;
+		ImpactBuffer.z = 0;
+	};
+}
+
+int SkyFarmerObject::test_objects_collision() {
+	BaseObject *p;
+
+	p = (BaseObject *)(BulletD.Tail);
+	while (p) {
+		if (p->Visibility == VISIBLE) {
+			test_object_to_baseobject(p);
+		}
+		p = (BaseObject *)(p->NextTypeList);
+	};
+
+	return 0;
+};
+
+#define ContusionRSpeed_X 0.1
+#define ContusionRSpeed_Y 0.1
+#define ContusionFallSpeed -15
+#define ContusionRRot_Z 0.075
+
+void SkyFarmerObject::Quant(void) {
 	Vector vTrack;
 	int d;
 
 	GetVisible();
 	R_prev = R_curr;
-	cycleTor(R_curr.x,R_curr.y);
+	cycleTor(R_curr.x, R_curr.y);
 	Timer++;
-	
-	vTrack = Vector(getDistX(TargetObject->R_curr.x,R_curr.x),getDistY(TargetObject->R_curr.y,R_curr.y),0);
+
+	vTrack = Vector(
+		getDistX(TargetObject->R_curr.x, R_curr.x), getDistY(TargetObject->R_curr.y, R_curr.y), 0);
 	d = vTrack.vabs();
 
-	if(d < radius*4){
-		if(TargetObject->SensorType + dTarget <= 0) dTarget = 1;
-		else if(TargetObject->SensorType + dTarget >= SkyFarmerWayTableSize - 1) dTarget = -1;
+	if (d < radius * 4) {
+		if (TargetObject->SensorType + dTarget <= 0)
+			dTarget = 1;
+		else if (TargetObject->SensorType + dTarget >= SkyFarmerWayTableSize - 1)
+			dTarget = -1;
 
 		TargetObject = FindFarmer(TargetObject->SensorType + dTarget);
 		SeedCount = MAX_DROP_SEED;
-	}else{
-		if(d < radius*7) skyfarmer_set_direction(vTrack);
-		else{
-			if(!RND(3)) skyfarmer_set_direction(vTrack);
+	} else {
+		if (d < radius * 7)
+			skyfarmer_set_direction(vTrack);
+		else {
+			if (!RND(3))
+				skyfarmer_set_direction(vTrack);
 		};
 	};
 
-	if(skyfarmer_fly_direction == 0){
-		if(SeedCount > 0){
-			addDevice(R_curr.x,R_curr.y,R_curr.z,CornType,0,1,NULL,STUFF_CREATE_TRACK);
-			DropCount--;
-			SeedCount--;
+	if (!Contusion) {
+		if (skyfarmer_fly_direction == 0) {
+			if (SeedCount > 0) {
+				addDevice(R_curr.x, R_curr.y, R_curr.z, CornType, 0, 1, NULL, STUFF_CREATE_TRACK);
+				DropCount--;
+				SeedCount--;
+			};
+			if (SeedCount <= 0)
+				scale_size = 2 * original_scale_size / 5 +
+							 3 * DropCount * original_scale_size / (MAX_DROP_POINT * 5);
+			else
+				scale_size = 2 * original_scale_size / 5 +
+							 2 * DropCount * original_scale_size / (5 * MAX_DROP_POINT) +
+							 DropCount * SeedCount * original_scale_size /
+								 (MAX_DROP_SEED * 5 * MAX_DROP_POINT);
+			if (DropCount == 0)
+				skyfarmer_end();
 		};
-		if(SeedCount <= 0) scale_size = 2 * original_scale_size / 5 + 3*DropCount * original_scale_size / (MAX_DROP_POINT * 5);
-		else scale_size = 2 * original_scale_size / 5 + 2*DropCount*original_scale_size / (5 * MAX_DROP_POINT) + DropCount * SeedCount*original_scale_size / (MAX_DROP_SEED * 5 * MAX_DROP_POINT);
-		if(DropCount == 0) skyfarmer_end();
-	};
+	} else {
+		R.z += ContusionFallSpeed;
+
+		R += ImpactBuffer;
+
+		W.z += ContusionRRot_Z;
+
+		if (dynamic_state & GROUND_COLLISION) {
+			// Skyfarmer death logic
+			int CorpsType = CornType == UVS_ITEM_TYPE::KERNOBOO ? UVS_ITEM_TYPE::JABLEE_NW : 0;
+			Status |= SOBJ_DISCONNECT;
+			addDevice(R_curr.x, R_curr.y, R_curr.z, CorpsType, 0, 1, NULL, STUFF_CREATE_TRACK);
+		}
+	}
 	analysis();
-	if(R_curr.z < -radius) Status |= SOBJ_DISCONNECT;
+	if (R_curr.z < -radius)
+		Status |= SOBJ_DISCONNECT;
 };
 
 void SkyFarmerObject::DrawQuant(void)
@@ -2267,6 +2450,7 @@ int uvsapiDestroyItem(int ind,int ind2)
 void WorldBulletTemplate::Init(Parser& in)
 {
 	char* name;
+
 
 	in.search_name("BulletID");
 	name = in.get_name();

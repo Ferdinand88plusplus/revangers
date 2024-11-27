@@ -84,7 +84,11 @@ void XErrorHandler::Abort(const char* message, int code, int val, const char* su
     NULL
   );
   //MessageBox(NULL,outmsg,prefix,attr | MB_TOPMOST | MB_SYSTEMMODAL);
+  #ifndef FDEBUG
   exit(code);
+  #else
+  __debugbreak();
+  #endif
 }
 
 void XErrorHandler::Log(const char* message)

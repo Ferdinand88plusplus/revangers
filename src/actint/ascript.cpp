@@ -13,6 +13,9 @@
 
 #include "mlstruct.h"
 #include "layout.h"
+
+#include "../3d/parser.h"
+#include <vector>
 /* ----------------------------- STRUCT SECTION ----------------------------- */
 /* ----------------------------- EXTERN SECTION ----------------------------- */
 
@@ -321,6 +324,11 @@ enum aOptions
 	ANCHOR_RIGHT,			//155
 	ANCHOR_BOTTOM,			//156
 
+	ITEM_PART,
+	ACTIVATABLE,
+	CYCLES_TRANS, // oh no 
+
+
 	MAX_OPTION
 };
 
@@ -551,7 +559,11 @@ static const char* aOptIDs[MAX_OPTION] =
 
 	"map_data",             // 154
 	"anchor_right",         // 155
-	"anchor_bottom"         // 156
+	"anchor_bottom",         // 156
+
+	"item_part",
+	"activatable",
+	"cycles_transform",
 };
 
 int curMode = AS_NONE;
@@ -595,8 +607,473 @@ aciML_EventSeq* mlEvSeq;
 aciBitmapMenuItem* aciBM_it;
 aciBitmapMenu* aciBM;
 
-void aParseScript(const char* fname,const char* bname)
+void initAvi(Parser &in, invMatrix *mtrx) {
+	in.search_name("ACI_PICTURE_AVI_ENG");
+	mtrx->init_avi_id(in.get_name(), 0);
+
+	in.search_name("ACI_PICTURE_AVI_ENG2");
+	mtrx->init_avi_id(in.get_name(), 3);
+
+	in.search_name("ACI_PICTURE_AVI_ENG3");
+	mtrx->init_avi_id(in.get_name(), 4);
+
+	in.search_name("ACI_TEXT_AVI_ENG");
+	mtrx->init_avi_id(in.get_name(), 1);
+
+	in.search_name("ACI_TEXT_AVI_RUS");
+	mtrx->init_avi_id(in.get_name(), 2);
+}
+
+inline invMatrix *cloneMatrix() {
+	invMatrix *clone = new invMatrix(*invMat);
+
+	return clone;
+}
+
+enum LST_MECHTYPES {
+	NORMAL,
+	RAFFA,
+	CONSTR,
+};
+
+void parseMechoses() {
+	Parser in("mechoses.lst");
+
+	std::string buf;
+
+	int mechosesCount;
+
+	int mechX;
+	int mechY;
+
+	int iMechX;
+	int iMechY;
+
+	int mechSzX;
+	int mechSzY;
+	int i, j, index = 0;
+
+	int mechType;
+
+	char *cbuf;
+	char *ptr;
+
+	invMatrix *clone;
+
+	in.search_name("hires");
+	mechX = in.get_int();
+	mechY = in.get_int();
+	in.search_name("ihires");
+	iMechX = in.get_int();
+	iMechY = in.get_int();
+	in.search_name("msize_x");
+	mechSzX = in.get_int();
+	in.search_name("msize_y");
+	mechSzY = in.get_int();
+
+	in.search_name("mechosesCount");
+	mechosesCount = in.get_int();
+
+	for (int m = 0; m < mechosesCount; m++) {
+		in.search_name("id");
+
+		invMat = new invMatrix;
+
+		invMat->internalID = in.get_int();
+		invMat->type = in.get_int();
+		invMat->ScreenX = iMechX;
+		invMat->ScreenY = iMechY;
+		invMat->SizeX = mechSzX;
+		invMat->SizeY = mechSzY;
+
+		invMat->numAviIDs = 5;
+		invMat->avi_ids = new char *[invMat->numAviIDs];
+		for (i = 0; i < invMat->numAviIDs; i++)
+			invMat->avi_ids[i] = NULL;
+
+		in.search_name("matrix");
+		invMat->alloc_matrix();
+		index = 0;
+
+		for (i = 0; i < invMat->SizeY; i++) {
+			for (j = 0; j < invMat->SizeX; j++) {
+				invMat->matrix[index]->type = in.get_int();
+				index++;
+			}
+		}
+		in.search_name("slot_types");
+		index = 0;
+
+		for (i = 0; i < invMat->SizeY; i++) {
+			for (j = 0; j < invMat->SizeX; j++) {
+				invMat->matrix[index]->slotType = in.get_int();
+				if (!invMat->matrix[index]->slotType)
+					invMat->matrix[index]->slotType = -1;
+				index++;
+			}
+		}
+		in.search_name("slot_nums");
+		index = 0;
+
+		for (i = 0; i < invMat->SizeY; i++) {
+			for (j = 0; j < invMat->SizeX; j++) {
+				invMat->matrix[index]->slotNumber = in.get_int() - 1;
+				index++;
+			}
+		}
+
+		if (lang() == RUSSIAN) {
+			in.search_name("rName");
+
+			cbuf = in.get_name();
+			invMat->mech_name = new char[strlen(cbuf)];
+			strcpy(invMat->mech_name, cbuf);
+
+		} else {
+			in.search_name("name");
+
+			cbuf = in.get_name();
+			invMat->mech_name = new char[strlen(cbuf)];
+			strcpy(invMat->mech_name, cbuf);
+		}
+
+		in.search_name("type");
+		buf = in.get_name();
+
+		mechType = NORMAL;
+
+		if (buf == "raffa")
+			mechType = RAFFA;
+		else if (buf == "constr")
+			mechType = CONSTR;
+		// else
+		//	ErrH.Abort(std::string("mechoses.lst: Unknown mechos type, mechos number: " + m
+		//).c_str());
+
+		switch (mechType) {
+		case RAFFA:
+			invMat->flags |= IM_RAFFA;
+			break;
+		case CONSTR:
+			// 1 fully broken var, and 2 half repaired vars of mechos.
+			for (i = 0; i < 3; i++) {
+				// clone = cloneMatrix();
+				clone = new invMatrix;
+
+				clone->ScreenX = invMat->ScreenX;
+				clone->ScreenY = invMat->ScreenY;
+				clone->SizeX = invMat->SizeX;
+				clone->SizeY = invMat->SizeY;
+
+				clone->mech_name = new char[strlen(invMat->mech_name)];
+				strcpy(clone->mech_name, invMat->mech_name);
+
+				clone->numAviIDs = 5;
+				clone->avi_ids = new char *[5];
+				for (i = 0; i < 5; i++)
+					clone->avi_ids[i] = NULL;
+
+				clone->alloc_matrix();
+
+				for (i = 0; i < clone->SizeX * clone->SizeY; i++) {
+					clone->matrix[i]->type = invMat->matrix[i]->type;
+					clone->matrix[i]->flags = 0;
+
+					clone->matrix[i]->slotType = invMat->matrix[i]->slotType;
+					clone->matrix[i]->slotNumber = invMat->matrix[i]->slotNumber;
+				}
+
+				in.search_name("id");
+				clone->internalID = in.get_int();
+				clone->type = in.get_int();
+
+				initAvi(in, clone);
+				clone->flags |= IM_NOT_COMPLETE;
+				aScrDisp->add_imatrix(clone);
+			}
+			break;
+		}
+
+		initAvi(in, invMat);
+
+		in.search_name("ACI_MECHOS_ENERGY_SHIELD");
+		invMat->alloc_prm();
+		ptr = invMat->pData + 0 * ACI_MAX_PRM_LEN;
+		cbuf = in.get_name();
+		strcpy(ptr, cbuf);
+
+		in.search_name("ACI_MECHOS_RESTORING_SPEED");
+		ptr = invMat->pData + 1 * ACI_MAX_PRM_LEN;
+		cbuf = in.get_name();
+		strcpy(ptr, cbuf);
+
+		in.search_name("ACI_MECHOS_MECHANIC_ARMOR");
+		ptr = invMat->pData + 2 * ACI_MAX_PRM_LEN;
+		cbuf = in.get_name();
+		strcpy(ptr, cbuf);
+
+		in.search_name("ACI_MECHOS_VELOCITY");
+		ptr = invMat->pData + 3 * ACI_MAX_PRM_LEN;
+		cbuf = in.get_name();
+		strcpy(ptr, cbuf);
+
+		in.search_name("ACI_MECHOS_SPIRAL_CAPACITY");
+		ptr = invMat->pData + 4 * ACI_MAX_PRM_LEN;
+		cbuf = in.get_name();
+		strcpy(ptr, cbuf);
+
+		in.search_name("ACI_MECHOS_AIR_RESERVE");
+		ptr = invMat->pData + 5 * ACI_MAX_PRM_LEN;
+		cbuf = in.get_name();
+		strcpy(ptr, cbuf);
+
+		in.search_name("back_bml");
+
+		aScrDisp->add_imatrix(invMat);
+
+		clone = new invMatrix;
+
+		clone->internalID = invMat->internalID;
+		clone->type = invMat->type;
+		clone->ScreenX = invMat->ScreenX;
+		clone->ScreenY = invMat->ScreenY;
+		clone->SizeX = invMat->SizeX;
+		clone->SizeY = invMat->SizeY;
+
+		clone->numAviIDs = 5;
+		clone->avi_ids = new char *[5];
+		for (i = 0; i < 5; i++)
+			clone->avi_ids[i] = NULL;
+
+		clone->alloc_matrix();
+
+		for (i = 0; i < clone->SizeX * clone->SizeY; i++) {
+			clone->matrix[i]->type = invMat->matrix[i]->type;
+			clone->matrix[i]->flags = 0;
+
+			clone->matrix[i]->slotType = invMat->matrix[i]->slotType;
+			clone->matrix[i]->slotNumber = invMat->matrix[i]->slotNumber;
+		}
+
+		clone->back = new bmlObject;
+		clone->back->init_name(in.get_name());
+
+		clone->anchor |= WIDGET_ANCHOR_RIGHT;
+
+		clone->ScreenX = mechX;
+		clone->ScreenY = mechY;
+
+		aScrDisp->add_matrix(clone);
+
+#ifdef FDEBUG
+		std::cout << "Parser::Successfully inited mechos \"" << invMat->mech_name << "\"\n";
+#endif
+	}
+}
+
+#define AsStr(what) '\"' < what < '\"'
+
+#ifdef GENERATE_ITEMS_ACI
+void saveItemsAci(void) {
+	int listsSize = aScrDisp->itemList->Size;
+	if (listsSize != aScrDisp->i_itemList->Size)
+		ErrH.Abort("Uncomparable items list (normal items list != iscreen items list)");
+
+	invItem *icurItem = (invItem *)aScrDisp->i_itemList->first;
+	invItem *curItem = (invItem *)aScrDisp->itemList->first;
+
+	XStream out("items_aci.lst", XS_OUT);
+
+	out < "// AUTOMATICALY GENERATED BY ITEM ACI GENERATOR (Revangers tool)\n";
+	out < "// String structure: str\t(eng_str)\t(rus_str)\n";
+
+	int i, j;
+
+	// In binary scripts, item construction is:
+	// [BASE BLOCK] - name, form ,events, etc., using both by iscreen and normal item
+	// [COMMENT BLOCK] - in iscreen - icomm, in normal - comm
+	// [BMP BLOCK] - icon file, using both by iscreen and normal item
+	// [VIDEO BLOCK] - 3 videos of item, using only by iscreen
+
+	// The parser is reads the item from up to bottom, so we need to filter these blocks.
+	// Iscreen is almost contains normal item in itself, so we can move his personal info
+	// into the bottom.
+	// About the comment... We can move it in the most end.
+	// And so new construction of item for parser is:
+	// [BASE BLOCK]						|
+	// [BMP BLOCK]						|
+	// [VIDEO BLOCK]					+---iscreen block, copying existing item
+	// [COMMENT&ICOMMENT BLOCK]			+---using normal comment for base item and putting in
+	// itemlist,
+	//										using iscreen comment for copy of item and putting in
+	//i_itemlist.
+
+	std::cout << "Generating " << listsSize << " items..\n";
+
+	for (i = 0; i < listsSize; i++) {
+		out < "\n//" < curItem->ID_ptr.c_str();
+
+		out < "\nname\t";
+		out < AsStr(curItem->ID_ptr.c_str());
+		out < '\t';
+		out < AsStr(curItem->ru_Var->ID_ptr.c_str());
+
+		out < "\npromptData\t";
+		if (curItem->promptData) {
+			out < AsStr(curItem->promptData);
+			out < '\t';
+			out < AsStr(curItem->ru_Var->promptData);
+		} else {
+			out < "NONE";
+		}
+
+		out < "\nprmTemplate\t";
+		if (curItem->pTemplate) {
+			out < AsStr(curItem->pTemplate);
+			out < '\t';
+			out < AsStr(curItem->ru_Var->pTemplate);
+		} else {
+			out < "NONE";
+		}
+
+		out < "\nid\t";
+		out <= curItem->ID;
+
+		out < "\nclass\t";
+		out <= curItem->classID;
+
+		out < "\nslotType\t";
+		out <= curItem->slotType;
+
+		out < "\nshape\t";
+		out <= curItem->ShapeLen;
+		out < '\n';
+
+		for (j = 0; j < curItem->ShapeLen; j++) {
+			out < '\t' <= curItem->ShapeX[j];
+			out < '\t';
+			out < '\t' <= curItem->ShapeY[j];
+			out < '\n';
+		}
+
+		out < "\nevent\t";
+		out <= curItem->EvCode;
+
+		int flagsCount = 0;
+
+		XBuffer flagsBuf;
+
+		for (j = 0; j < INV_ITEM_FLAGS_MAX; j++) {
+			if (curItem->flags & flagsTable[j]) {
+				flagsCount++;
+				flagsBuf < '\t' < flagsStrTable[j] < '\n';
+			}
+		}
+
+		flagsBuf[flagsBuf.offset] = 0;
+
+		out < "\nflags\t";
+		out <= flagsCount;
+
+		out < '\n';
+		out < flagsBuf.buf;
+
+		flagsBuf.free();
+
+		out < "\nfncMenuType\t";
+		if (curItem->menu) {
+			out <= ((fncMenu *)(curItem->menu))->type;
+		} else {
+			out < "-1";
+		}
+
+		out < "\nbmp_file\t";
+		out < AsStr(curItem->fname);
+
+		out < "\nibmp_file\t";
+		out < AsStr(icurItem->fname);
+
+		out < "\ncomments\n";
+		out <= curItem->numComments;
+		for (j = 0; j < curItem->numComments; j++) {
+			out < "\n\t";
+			out < AsStr(curItem->comments[j]);
+		}
+		out < '\n';
+		out <= curItem->ru_Var->numComments;
+		for (j = 0; j < curItem->ru_Var->numComments; j++) {
+			out < "\n\t";
+			out < AsStr(curItem->ru_Var->comments[j]);
+		}
+
+		out < "\nicomments\n";
+		out <= icurItem->numComments;
+		for (j = 0; j < icurItem->numComments; j++) {
+			out < "\n\t";
+			out < AsStr(icurItem->comments[j]);
+		}
+		out < '\n';
+		out <= icurItem->ru_Var->numComments;
+		for (j = 0; j < icurItem->ru_Var->numComments; j++) {
+			out < "\n\t";
+			out < AsStr(icurItem->ru_Var->comments[j]);
+		}
+
+		out < "\nshopPrms\n";
+		if (!icurItem->pData)
+			out < "NONE\n";
+		else {
+			//				the last one is using by game
+			for (j = 0; j < INV_ITEM_NUM_PARAMS - 1; j++) {
+				switch (j) {
+				case ACI_WEAPON_DAMAGE:
+					out < "Damage";
+					break;
+				case ACI_WEAPON_LOAD:
+					out < "Load";
+					break;
+				case ACI_WEAPON_RANGE:
+					out < "Range";
+					break;
+				case ACI_WEAPON_SHOTS_SEC:
+					out < "Shots(sec)";
+					break;
+				}
+				out < ":\t";
+
+				if (!(icurItem->pData + j * ACI_MAX_PRM_LEN))
+					out < "NONE";
+				else
+					out < AsStr(icurItem->pData + j * ACI_MAX_PRM_LEN);
+
+				out < '\n';
+			}
+		}
+
+		out < "\navi_picture\t";
+		out < AsStr(icurItem->avi_ids[ACI_PICTURE_AVI_ENG]);
+
+		out < "\navi_text_eng\t";
+		out < AsStr(icurItem->avi_ids[ACI_TEXT_AVI_ENG]);
+
+		out < "\navi_text_rus\t";
+		out < AsStr(icurItem->avi_ids[ACI_TEXT_AVI_RUS]);
+
+		icurItem = (invItem *)icurItem->next;
+		curItem = (invItem *)curItem->next;
+	}
+
+	out.close();
+}
+#endif
+
+#ifdef GENERATE_ITEMS_ACI
+void aParseScript(const char *fname, const char *bname, bool subWrite)
+#else
+void aParseScript(const char *fname, const char *bname)
+#endif
 {
+	
 	int i,id,t_id = 0,sz = 0,num;
 
 	char* ptr;
@@ -604,9 +1081,20 @@ void aParseScript(const char* fname,const char* bname)
 
 	invMatrix* mtx;
 	invItem* itm;
-
+#ifdef GENERATE_ITEMS_ACI
+	if (!subWrite) {
+		aScrDisp = new actIntDispatcher;
+		aciML_D = new aciML_Dispatcher;
+	}
+#else
 	aScrDisp = new actIntDispatcher;
 	aciML_D = new aciML_Dispatcher;
+#endif
+
+#ifndef GENERATE_ITEMS_ACI
+	parseMechoses();
+#endif
+	invMat = 0;
 
 #ifndef _BINARY_SCRIPT_
 	_sALLOC_HEAP_(3000000,char);
@@ -648,16 +1136,24 @@ void aParseScript(const char* fname,const char* bname)
 						handle_error("Bad matrix ID");
 					break;
 				case INIT_ITEM_PRM:
-					t_id = script -> read_idata();
-					itm = aScrDisp -> get_iitem(t_id);
-					if(itm){
-						t_id = script -> read_idata();
-						if(!itm -> pData) itm -> alloc_prm();
-						ptr = itm -> pData + t_id * ACI_MAX_PRM_LEN;
-						script -> read_pdata(&ptr);
-					}
-					else
+#ifdef GENERATE_ITEMS_ACI
+					t_id = script->read_idata();
+					itm = aScrDisp->get_iitem(t_id);
+					if (itm) {
+						t_id = script->read_idata();
+						if (!itm->pData)
+							itm->alloc_prm();
+						ptr = itm->pData + t_id * ACI_MAX_PRM_LEN;
+						script->read_pdata(&ptr);
+					} else
 						handle_error("Bad item ID");
+#else
+					char *pseudobuffer;
+					script->read_idata();
+					script->read_idata();
+					script->read_pdata(&pseudobuffer, 1);
+					delete[] pseudobuffer;
+#endif
 					break;
 				case SET_PROMPT_TEXT:
 					if(curMode == AS_INIT_BUTTON){
@@ -1109,7 +1605,11 @@ void aParseScript(const char* fname,const char* bname)
 					iScreenFlag = 1;
 					break;
 				case I_END_BLOCK:
+#ifdef GENERATE_ITEMS_ACI
+					end_block(subWrite);
+#else
 					end_block();
+#endif
 					break;
 				case INIT_CELL_SIZE:
 					if(iScreenFlag)
@@ -2178,6 +2678,23 @@ void aParseScript(const char* fname,const char* bname)
 							handle_error("Misplaced option", aOptIDs[id]);
 					}
 					break;
+				case ACTIVATABLE:
+					if (curMode == AS_INIT_ITEM) {
+						invItm->ActiveState = 0;
+						script->read_pdata(&invItm->ActiveText, 1);
+						script->read_pdata(&invItm->DeactiveText, 1);
+
+					} else
+						handle_error("Misplaced option", aOptIDs[id]);
+					break;
+				case ITEM_PART:
+					if (curMode == AS_INIT_ITEM) {
+						invItm->CraftWithID = script->read_idata();
+						invItm->CraftResultID = script->read_idata();
+					} else
+						handle_error("Misplaced option", aOptIDs[id]);
+					break;
+
 			}
 #ifndef _BINARY_SCRIPT_
 		}
@@ -2240,171 +2757,227 @@ void load_slot_types(void)
 		}
 	}
 }
-
+#ifdef GENERATE_ITEMS_ACI
+void end_block(bool subWrite)
+#else
 void end_block(void)
+#endif
 {
-	switch(curMode){
-		case AS_NONE:
-			if(!iScreenFlag)
-				handle_error("Misplaced \"}\"");
-			else
-				iScreenFlag = 0;
-			break;
-		case AS_INIT_SHAPE_OFFS:
-			curMode = AS_INIT_ITEM;
-			break;
-		case AS_INIT_ITEM:
-			curMode = AS_NONE;
-			if(iScreenFlag)
-				aScrDisp -> add_iitem(invItm);
-			else
-				aScrDisp -> add_item(invItm);
-			break;
-		case AS_INIT_MATRIX:
-			curMode = AS_NONE;
-			if(iScreenFlag)
-				aScrDisp -> add_imatrix(invMat);
-			else
-				aScrDisp -> add_matrix(invMat);
-			break;
-		case AS_INIT_MATRIX_EL:
-			curMode = AS_INIT_MATRIX;
-			break;
-		case AS_INIT_MENU:
-			if(!iScreenFlag){
-				if(fnMnu -> flags & FM_ITEM_MENU){
-					curMode = AS_INIT_ITEM;
-					aScrDisp -> add_menu(fnMnu);
-					invItm -> menu = (iListElement*)fnMnu;
+	iListElement *itemPtr;
+	switch (curMode) {
+	case AS_NONE:
+		if (!iScreenFlag)
+			handle_error("Misplaced \"}\"");
+		else
+			iScreenFlag = 0;
+		break;
+	case AS_INIT_SHAPE_OFFS:
+		curMode = AS_INIT_ITEM;
+		break;
+	case AS_INIT_ITEM:
+		curMode = AS_NONE;
+#ifdef GENERATE_ITEMS_ACI
+		if (iScreenFlag) {
+			if (subWrite) {
+				itemPtr = aScrDisp->i_itemList->last;
+				bool found = 0;
+				while (itemPtr) {
+					if (((invItem *)(itemPtr))->ID == invItm->ID) {
+						((invItem *)(itemPtr))->ru_Var = invItm;
+						found = 1;
+						break;
+					}
+					itemPtr = itemPtr->prev;
 				}
-				else {
-					curMode = AS_NONE;
-					aScrDisp -> add_menu(fnMnu);
+				if (!found) {
+					ErrH.Abort(
+						"[ITEM ACI GENERATOR](ISCREEN)\nCant find eng var of item...",
+						1,
+						-1,
+						invItm->ID_ptr.c_str());
 				}
+			} else {
+				aScrDisp->add_iitem(invItm);
 			}
+		} else {
+			if (subWrite) {
+				itemPtr = aScrDisp->itemList->last;
+
+				bool found = 0;
+				while (itemPtr) {
+					if (((invItem *)(itemPtr))->ID == invItm->ID) {
+						((invItem *)(itemPtr))->ru_Var = invItm;
+						found = 1;
+						break;
+					}
+					itemPtr = itemPtr->prev;
+				}
+				if (!found) {
+					ErrH.Abort(
+						"[ITEM ACI GENERATOR]\nCant find eng var of item...",
+						1,
+						-1,
+						invItm->ID_ptr.c_str());
+				}
+			} else {
+				aScrDisp->add_item(invItm);
+			}
+		}
+#else
+		if (iScreenFlag)
+			aScrDisp->add_iitem(invItm);
+		else
+			aScrDisp->add_item(invItm);
+#endif
+		break;
+	case AS_INIT_MATRIX:
+		curMode = AS_NONE;
+		if (iScreenFlag)
+			aScrDisp->add_imatrix(invMat);
+		else
+			aScrDisp->add_matrix(invMat);
+		break;
+	case AS_INIT_MATRIX_EL:
+		curMode = AS_INIT_MATRIX;
+		break;
+	case AS_INIT_MENU:
+#ifdef GENERATE_ITEMS_ACI
+		if (!iScreenFlag) {
+			if (fnMnu->flags & FM_ITEM_MENU) {
+				curMode = AS_INIT_ITEM;
+				aScrDisp->add_menu(fnMnu);
+				invItm->menu = (iListElement *)fnMnu;
+			} else {
+				curMode = AS_NONE;
+				aScrDisp->add_menu(fnMnu);
+			}
+		} else {
+			if (fnMnu->flags & FM_ITEM_MENU) {
+				curMode = AS_INIT_ITEM;
+				invItm->menu = (iListElement *)fnMnu;
+			} else {
+				curMode = AS_NONE;
+				fnMnu->flags |= FM_ISCREEN_MENU;
+				aScrDisp->add_imenu(fnMnu);
+			}
+		}
+#else
+		if (iScreenFlag)
+			aScrDisp->add_imenu(fnMnu);
+		else
+			aScrDisp->add_menu(fnMnu);
+		curMode = AS_NONE;
+#endif
+		break;
+	case AS_INIT_MENU_ITEM:
+		curMode = AS_INIT_MENU;
+		if (upMenuFlag) {
+			fnMnu->upMenuItem = fnMnuItm;
+			upMenuFlag = 0;
+		} else
+			fnMnu->add_item(fnMnuItm);
+		break;
+	case AS_INIT_BUTTON:
+		curMode = AS_NONE;
+		if (aBt->type == INTERF_BUTTON)
+			aScrDisp->intButtons->connect((iListElement *)aBt);
+		if (aBt->type == INV_BUTTON)
+			aScrDisp->invButtons->connect((iListElement *)aBt);
+		if (aBt->type == INFO_BUTTON)
+			aScrDisp->infButtons->connect((iListElement *)aBt);
+		break;
+	case AS_INIT_COUNTER:
+		curMode = AS_NONE;
+		if (iScreenFlag) {
+			aScrDisp->i_Counters->connect((iListElement *)cP);
+		} else {
+			if (cP->type == CP_INT)
+				aScrDisp->intCounters->connect((iListElement *)cP);
+			if (cP->type == CP_INV)
+				aScrDisp->invCounters->connect((iListElement *)cP);
+			if (cP->type == CP_INF)
+				aScrDisp->infCounters->connect((iListElement *)cP);
+		}
+		break;
+	case AS_INIT_IBS:
+		aScrDisp->ibsList->connect((iListElement *)ibsObj);
+		curMode = AS_NONE;
+		break;
+	case AS_INIT_BML:
+		aScrDisp->backList->connect((iListElement *)bmlObj);
+		curMode = AS_NONE;
+		break;
+	case AS_INIT_IND:
+		aScrDisp->add_ind(aInd);
+		curMode = AS_NONE;
+		break;
+	case AS_INIT_INFO_PANEL:
+		if (iScreenFlag) {
+			if (!iPl->type)
+				aScrDisp->iscr_iP = iPl;
 			else {
-				if(fnMnu -> flags & FM_ITEM_MENU){
-					curMode = AS_INIT_ITEM;
-					invItm -> menu = (iListElement*)fnMnu;
-				}
-				else {
-					curMode = AS_NONE;
-					fnMnu -> flags |= FM_ISCREEN_MENU;
-					aScrDisp -> add_imenu(fnMnu);
-				}
+				aScrDisp->i_infoPanels->connect((iListElement *)iPl);
 			}
-			break;
-		case AS_INIT_MENU_ITEM:
-			curMode = AS_INIT_MENU;
-			if(upMenuFlag){
-				fnMnu -> upMenuItem = fnMnuItm;
-				upMenuFlag = 0;
-			}
-			else
-				fnMnu -> add_item(fnMnuItm);
-			break;
-		case AS_INIT_BUTTON:
-			curMode = AS_NONE;
-			if(aBt -> type == INTERF_BUTTON)
-				aScrDisp -> intButtons -> connect((iListElement*)aBt);
-			if(aBt -> type == INV_BUTTON)
-				aScrDisp -> invButtons -> connect((iListElement*)aBt);
-			if(aBt -> type == INFO_BUTTON)
-				aScrDisp -> infButtons -> connect((iListElement*)aBt);
-			break;
-		case AS_INIT_COUNTER:
-			curMode = AS_NONE;
-			if(iScreenFlag){
-				aScrDisp -> i_Counters -> connect((iListElement*)cP);
-			}
+		} else {
+			if (!iPl->type)
+				aScrDisp->iP = iPl;
 			else {
-				if(cP -> type == CP_INT)
-					aScrDisp -> intCounters -> connect((iListElement*)cP);
-				if(cP -> type == CP_INV)
-					aScrDisp -> invCounters -> connect((iListElement*)cP);
-				if(cP -> type == CP_INF)
-					aScrDisp -> infCounters -> connect((iListElement*)cP);
+				aScrDisp->infoPanels->connect((iListElement *)iPl);
 			}
-			break;
-		case AS_INIT_IBS:
-			aScrDisp -> ibsList -> connect((iListElement*)ibsObj);
-			curMode = AS_NONE;
-			break;
-		case AS_INIT_BML:
-			aScrDisp -> backList -> connect((iListElement*)bmlObj);
-			curMode = AS_NONE;
-			break;
-		case AS_INIT_IND:
-			aScrDisp -> add_ind(aInd);
-			curMode = AS_NONE;
-			break;
-		case AS_INIT_INFO_PANEL:
-			if(iScreenFlag){
-				if(!iPl -> type)
-					aScrDisp -> iscr_iP = iPl;
-				else {
-					aScrDisp -> i_infoPanels -> connect((iListElement*)iPl);
-				}
-			}
-			else {
-				if(!iPl -> type)
-					aScrDisp -> iP = iPl;
-				else {
-					aScrDisp -> infoPanels -> connect((iListElement*)iPl);
-				}
-			}
-			curMode = AS_NONE;
-			break;
-		case AS_INIT_COLOR_SCHEME:
-			curMode = AS_NONE;
-			break;
-		case AS_INIT_LOC_DATA:
-			aScrDisp -> add_locdata(locData);
-			curMode = AS_NONE;
-			break;
-		case AS_INIT_WORLD_MAP:
-			aScrDisp -> wMap = wMap;
-			curMode = AS_NONE;
-			break;
-		case AS_INIT_WORLD_DATA:
-			wMap -> world_list -> connect((iListElement*)wData);
-			wData -> owner = (iListElement*)wMap;
-			curMode = AS_INIT_WORLD_MAP;
-			break;
-		case AML_INIT_DATA:
-			mlDataSet -> add_data(mlData);
-			curMode = AML_INIT_DATA_SET;
-			break;
-		case AML_INIT_DATA_SET:
-			aciML_D -> add_data_set(mlDataSet);
-			curMode = AS_NONE;
-			break;
-		case AML_INIT_EVENT:
-			mlData -> add_event(mlEv);
-			curMode = AML_INIT_DATA;
-			break;
-		case AML_INIT_EVENT_COMMAND:
-			mlEv -> add_command(mlEvComm);
-			curMode = AML_INIT_EVENT;
-			break;
-		case BM_INIT_MENU_ITEM:
-			aciBM -> add_item(aciBM_it);
-			curMode = BM_INIT_MENU;
-			break;
-		case BM_INIT_MENU:
-			aScrDisp -> add_bmenu(aciBM);
-			curMode = AS_NONE;
-			break;
-		case AS_INIT_SHUTTER:
-			curMode = AS_INIT_LOC_DATA;
-			locSh -> init();
-			break;
-		case AML_INIT_EVENT_SEQ:
-			mlDataSet -> add_seq(mlEvSeq);
-			curMode = AML_INIT_DATA_SET;
-			break;
+		}
+		curMode = AS_NONE;
+		break;
+	case AS_INIT_COLOR_SCHEME:
+		curMode = AS_NONE;
+		break;
+	case AS_INIT_LOC_DATA:
+		aScrDisp->add_locdata(locData);
+		curMode = AS_NONE;
+		break;
+	case AS_INIT_WORLD_MAP:
+		aScrDisp->wMap = wMap;
+		curMode = AS_NONE;
+		break;
+	case AS_INIT_WORLD_DATA:
+		wMap->world_list->connect((iListElement *)wData);
+		wData->owner = (iListElement *)wMap;
+		curMode = AS_INIT_WORLD_MAP;
+		break;
+	case AML_INIT_DATA:
+		mlDataSet->add_data(mlData);
+		curMode = AML_INIT_DATA_SET;
+		break;
+	case AML_INIT_DATA_SET:
+		aciML_D->add_data_set(mlDataSet);
+		curMode = AS_NONE;
+		break;
+	case AML_INIT_EVENT:
+		mlData->add_event(mlEv);
+		curMode = AML_INIT_DATA;
+		break;
+	case AML_INIT_EVENT_COMMAND:
+		mlEv->add_command(mlEvComm);
+		curMode = AML_INIT_EVENT;
+		break;
+	case BM_INIT_MENU_ITEM:
+		aciBM->add_item(aciBM_it);
+		curMode = BM_INIT_MENU;
+		break;
+	case BM_INIT_MENU:
+		aScrDisp->add_bmenu(aciBM);
+		curMode = AS_NONE;
+		break;
+	case AS_INIT_SHUTTER:
+		curMode = AS_INIT_LOC_DATA;
+		locSh->init();
+		break;
+	case AML_INIT_EVENT_SEQ:
+		mlDataSet->add_seq(mlEvSeq);
+		curMode = AML_INIT_DATA_SET;
+		break;
 	}
 }
+
 
 void init_event_code(int cd)
 {
@@ -2415,6 +2988,9 @@ void init_event_code(int cd)
 void load_item_shape(void)
 {
 	int i;
+	#ifndef GENERATE_ITEMS_ACI
+	std::cout << "ACHTUNG: Loading item shape using bscr\n";
+	#endif
 	invItm -> ShapeX = new int[invItm -> ShapeLen];
 	invItm -> ShapeY = new int[invItm -> ShapeLen];
 	for(i = 0; i < invItm -> ShapeLen; i ++){

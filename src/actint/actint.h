@@ -1,7 +1,8 @@
 
-#define _ACI_PACK_SAVES_
-
 /* ----------------------------- Debug options ------------------------------ */
+
+#define _ACI_PACK_SAVES_
+// #define DYNAMIC_PTR
 
 #define _ACI_CHECK_DIALOGS_
 //#define _ACI_SKIP_MAINMENU_
@@ -20,6 +21,8 @@
 //#define _ACI_ESCAVE_DEBUG_
 
 /* -------------------------------------------------------------------------- */
+
+#include <vector>
 
 #define _ACI_BML_FONTS_
 #ifdef _DEBUG
@@ -359,6 +362,8 @@ const int  INV_ITEM_NO_PAY		= 0x20;
 const int  INV_ITEM_NO_ACTIVATE	= 0x40;
 const int  INV_ITEM_SHOW_ESCAVE	= 0x80;
 const int  INV_ITEM_NEW		= 0x100;
+const int  INV_ITEM_FLAGS_MAX = 8;
+
 
 const int  INV_FONT	= 1;
 const int  INV_COL	= 30;
@@ -377,6 +382,10 @@ const int 	ACI_MAX_PRM_LEN 	= 10;
 
 struct invItem : public iListElement
 {
+#ifdef GENERATE_ITEMS_ACI
+	invItem *ru_Var = 0;
+#endif
+
 	int ID;
 	int classID;
 
@@ -415,6 +424,12 @@ struct invItem : public iListElement
 
 	int NumIndex;
 
+	int CraftWithID = -1;
+	int CraftResultID = -1;
+	char ActiveState = -1;
+	char *ActiveText = 0;
+	char *DeactiveText = 0;
+
 	actintItemData* item_ptr;
 	void* uvsDataPtr;
 
@@ -443,6 +458,9 @@ struct invItem : public iListElement
 	void calc_shape_center(void);
 
 	void redraw(int x,int y,int drop_mode = 0,int flush_mode = 0);
+
+	// Revangers
+	void copyNewPtrs(invItem *from);
 
 	invItem(void);
 	~invItem(void);
@@ -1071,85 +1089,8 @@ struct InfoPanel : public iListElement
 	~InfoPanel(void);
 };
 
-// Event codes...
-enum actEventCodes {
-	EV_CHANGE_MODE = ACI_MAX_EVENT + 1,
-	EV_SET_MODE,
-	EV_ACTIVATE_MENU,
-	EV_CHANGE_SCREEN,
-	EV_FULLSCR_CHANGE,
-	EV_ACTIVATE_IINV,
-	EV_DEACTIVATE_IINV,
-	EV_ACTIVATE_MATRIX,
-	EV_DEACTIVATE_MATRIX,
-	EV_EVINCE_PALETTE,
-	EV_INIT_MATRIX_OBJ,
-	EV_INIT_SC_MATRIX_OBJ,
-	EV_REDRAW,
-	EV_CANCEL_MATRIX,
-	EV_AUTO_MOVE_ITEMS,
-	EV_SET_MECH_NAME,
+#include "actevents.h"
 
-	EV_NEXT_SHOP_AVI,
-	EV_PREV_SHOP_AVI,
-
-	EV_CHANGE_AVI_LIST,
-
-	EV_BUY_ITEM,
-
-	EV_SET_ITM_PICKUP,
-	EV_SET_WPN_PICKUP,
-
-	EV_ACTIVATE_SHOP_MENU,
-	EV_CHOOSE_SHOP_ITEM,
-
-	EV_NEXT_PHRASE,
-	EV_START_SPEECH,
-	EV_SHOW_QUESTS,
-	EV_ASK_QUEST,
-
-	EV_TRY_2_ENTER,
-	EV_GET_CIRT,
-
-	EV_TAKE_ELEECH,
-	EV_GET_ELEECH,
-	EV_ISCR_KEYTRAP,
-
-	EV_LOCK_ISCREEN,
-	EV_UNLOCK_ISCREEN,
-
-	EV_SELL_MOVE_ITEM,
-	EV_CHANGE_AVI_INDEX,
-
-	EV_TELEPORT,
-
-	EV_INIT_BUTTONS,
-
-	EV_ENTER_TEXT_MODE,
-	EV_LEAVE_TEXT_MODE,
-
-	EV_PROTRACTOR_EVENT,
-	EV_MECH_MESSIAH_EVENT,
-
-	EV_GET_BLOCK_PHRASE,
-
-	EV_PAUSE_AML,
-	EV_RESUME_AML,
-
-	EV_ENTER_CHAT,
-	EV_LEAVE_CHAT,
-
-	EV_ITEM_TEXT,
-
-	EV_GET_RUBOX,
-	EV_INIT_AVI_OBJECT,
-
-	EV_VSS_CAMERA_ROT_EVENT,
-	EV_VSS_CAMERA_ZOOM_EVENT,
-	EV_VSS_CAMERA_PERSP_EVENT,
-
-	EV_MAX_CODE
-};
 
 struct actEvent
 {
@@ -1426,6 +1367,10 @@ struct actIntDispatcher
 	void clear_menu(fncMenu* p);
 	void free_matrix(invMatrix* p);
 
+	// Revangers (calling by clicking RMB on item)
+	void TryCraft(int ResultID, int x, int y);
+	void TryCharge(int x, int y);
+
 	void change_mode(void);
 	void set_fullscreen(bool isEnabled);
 	void inv_mouse_move_quant(void);
@@ -1440,6 +1385,7 @@ struct actIntDispatcher
 	int put_item_xy(invItem* p,int x,int y,int sflag = 0);
 	int put_item_auto(invItem* p);
 
+	void directSetMoveItem(invItem *p, invMatrix *m);
 	void change_items(int x,int y,int sflag = 0);
 	void remove_item(actintItemData* d);
 	void set_move_item(int index,int sflag = 0);
@@ -1478,6 +1424,11 @@ int aStrHeight(int font);
 int aStrHeight32(int font);
 
 extern int actintLowResFlag;
+
+extern int flagsTable[INV_ITEM_FLAGS_MAX];
+extern const char *flagsStrTable[INV_ITEM_FLAGS_MAX];
+
+extern std::vector<int> startItemsID;
 
 #ifdef _ACTINT_MEMSTAT_
 extern int memQ;

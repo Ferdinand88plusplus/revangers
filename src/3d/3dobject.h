@@ -3,6 +3,7 @@
 
 #include "3d_math.h"
 #include "3dgraph.h"
+#include <vector>
 
 const char TG_NO_TOUCH = 1;
 const char TG_POINT_TOUCH = 2;
@@ -179,7 +180,6 @@ struct CONTROLS {
 #define MIDDLE_SLOT    2
 #define MAX_SLOTS	3
 
-
 // Spring's directions
 #define SPRING_UNTOUCHED	0
 #define SPRING_UP		1
@@ -201,11 +201,24 @@ struct Wheel {
 	double dZ;
 };
 
+struct Object;
+
+// Render equirement to draw 3d objects on other 3d objects.
+struct SubRenderReq{
+	enum Type{
+		Weapon = 1,
+	};
+
+	Object* object;
+	uchar type = 0;
+	int data;
+	DBV offs;
+};
+
 /*******************************************************************************
 		3D object for building Mechouses, Raffas, Static Objects.
 *******************************************************************************/
 struct Object : BaseObject {
-
 	// Part of 3D data
 	int n_models;
 	Model* models;
@@ -226,15 +239,17 @@ struct Object : BaseObject {
 	Model* debris;
 	Model* bound_debris;
 
+	// cleared after draw
+	std::vector<SubRenderReq*> render_reqs;
+
 	int slots_existence;
-	Object* data_in_slots[MAX_SLOTS];
 	Vector R_slots[MAX_SLOTS];
 	int location_angle_of_slots[MAX_SLOTS];
-	
+
 	char prm_name[128];
 	
 	Object* old_appearance_storage;
-
+	
 
 	// Part of coordinates
 	Vector R_scr;
@@ -267,6 +282,7 @@ struct Object : BaseObject {
 	DBV dR_corr;
 	Quaternion dQ_corr;
 
+	
 	// Part of control variables
 	int analysis_off;
 	int disable_control;
@@ -299,10 +315,9 @@ struct Object : BaseObject {
 	int skyfarmer_fly_direction;
 	DBV skyfarmer_direction;
 
+
 	double k_elastic_modulation;
 	DangerDataType* closest_field_object;
-
-	// Part of dynamic constants
 
 	// Base params
 	double m;
@@ -314,7 +329,7 @@ struct Object : BaseObject {
 	// Car's params
 	double speed_factor;
 	double mobility_factor;
-	
+
 	// Devices params
 	double water_speed_factor;
 	double air_speed_factor;
@@ -345,6 +360,7 @@ struct Object : BaseObject {
 	int LowerRamPower;
 
 	int max_jump_distance;
+	
 
 	int end_of_object_data;
 
@@ -364,6 +380,7 @@ struct Object : BaseObject {
 	void loadLST(char* name_lst,char* name_asc = 0);
 	void loadM3D(char* name);
 	void saveM3D(char* name);
+	void loadOBP(char *name); // .obj pack loading
 
 	void loadLSA(char* name);
 	void loadA3D(char* name);
@@ -374,7 +391,12 @@ struct Object : BaseObject {
 	void non_sorted_draw();
 
 	void set_body_color(unsigned int color_id);
-	void lay_to_slot(int slot,Object* weapon);
+
+	void clear_slot(int slot);
+	int lay_to_slot(int slot,Object* weapon, bool take_out);
+	int update_cords(int slot, int subslots_num);
+
+	void SkyfarmerTerrainPhysic();
 
 	// Part of dynamic function
 	void dynamics_init(char* prm_name);

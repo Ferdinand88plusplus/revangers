@@ -69,14 +69,14 @@ union UnitOrderType
 	UnitOrderType(VangerUnit* p){ VangerT = p; };
 };
 
-VangerUnit* addVanger(uvsVanger* p,int x,int y,int Human = 0);
+VangerUnit* addVanger(uvsVanger* p,int x,int y,int Human = 0, bool fast = 0);
 VangerUnit* addVanger(uvsVanger* p,uvsPassage* origin,int Human = 0);
 VangerUnit* addVanger(uvsVanger* p,uvsEscave* origin,int Human = 0);
 VangerUnit* addVanger(uvsVanger* p,uvsSpot* origin,int Human = 0);
 
 //void addDevice(int x,int y,int z,uvsItem* uvsD,ActionUnit* Owner,int net_mode,int nid);
 void BunchEvent(int type);
-void ChangeWorld(int world,int flag = 1);
+void ChangeWorld(int world,int flag = 1, bool fast = 0);
 
 int uvsapiDestroyItem( int ind,int ind2);
 int uvsSetItemType(int type,int param1,int param2);

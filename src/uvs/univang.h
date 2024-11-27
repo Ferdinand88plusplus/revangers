@@ -4,6 +4,9 @@
 		Author: K-D Lab::KranK, KoTo
 */
 
+#include "../3d/parser.h"
+#include <vector>
+
 #define LOC_TIME 10
 
 // количество основных миров
@@ -67,6 +70,7 @@ struct uvsTradeItem;
 struct uvsCrypt;
 struct uvsElement;
 struct uvsMechosList;
+struct PersData;
 
 
 struct EscaveEngine;
@@ -80,9 +84,15 @@ extern uvsContimer ConTimer;
 
 extern uvsMechosType** uvsMechosTable;
 extern uvsItemType** uvsItemTable;
+extern int *aci2UvsIDTable;
+extern PersData** PersDataList;
+
 
 extern int MAX_ITEM_TYPE;	//  число инвентори
 extern int MAX_MECHOS_TYPE;  //  число типов мехосов
+extern int MAX_MECHOS_RAFFA;
+extern int MAX_MECHOS_CONSTRACTOR;
+
 extern uvsActInt* GMechos;
 extern uvsActInt* GItem;
 extern uvsActInt* GGamer;
@@ -91,6 +101,9 @@ extern uvsActInt* GTreasureItem;
 //extern uvsMechosList* GGamerList;
 extern int uvsKronActive;
 extern int uvsCurrentWorldUnable;
+extern bool botsCanGoOut;
+
+extern std::vector<int> startItemsID;
 
 /* --- Global Consts --- */
 
@@ -397,7 +410,15 @@ struct UVS_ITEM_TYPE {
 		TANKACID,
 		DEAD_KERNOBOO,
 		DEAD_PIPETKA,
-		DEAD_WEEZYK
+		DEAD_WEEZYK,
+
+		// Revangers::Raffers
+		NUCLEORUM,
+		HOTBEEB,
+		HOTBAG,
+		JABLEE_NW,
+		JABLEE_PS,
+		GHORBULATOR,
 		};
 	};
 
@@ -856,7 +877,17 @@ struct uvsShop : listElem {
 	char *ItemHere;
 	int locked;
 
-		uvsShop(void): listElem(){Pmechos = NULL; Pitem = NULL; locked  = 0; Price = NULL; ItemHere = NULL; };
+		void fAddEverything();
+		uvsShop(void): listElem() {
+				Pmechos = NULL;
+				Pitem = NULL;
+				locked = 0;
+				Price = NULL;
+				ItemHere = NULL;
+		#ifdef FDEBUG
+				fAddEverything();
+		#endif
+			};
 		uvsShop(XStream& pfile);
 		~uvsShop(void);
 
@@ -924,6 +955,65 @@ struct uvsTabuTaskType : listElem {
 	int Erase(int, int&);
 };
 
+
+struct PersDataType {
+	enum {
+		LandMine,
+		LandMineBag,
+		Earthmover,
+
+		Size,
+	};
+};
+
+struct PersData : listElem {
+	int type;
+
+	virtual void Load(Parser* in) = 0;
+};
+
+struct LandMineData : PersData {
+	int DamagePower;
+	int ImpulsePower;
+	int ExplodeSprite;
+	int CraterType;
+
+	void Load(Parser *in) override;
+};
+
+struct LandMineBagData : PersData {
+	int DamagePower;
+	int ImpulsePower;
+	int ExplodeSprite;
+	int CraterType;
+	float BunchImpulse;
+	int BunchSize;
+
+	void Load(Parser *in) override;
+};
+
+struct EarthmoverData : PersData {
+	int ReloadCrater;
+	int DirtHillRadius;
+
+	void Load(Parser *in) override;
+};
+
+struct ItemFamily {
+	enum {
+		Other = 0,
+		Machotine = 1,
+		Ghorb = 2,
+		Terminator = 3,
+		Speetle = 4,
+		ThreallStuff = 5,
+		Dead = 6,
+		RaceItem = 7,
+		Passenger = 8,
+		BasicWare = 9,
+	};
+};
+
 struct uvsItemType{
 	char* name;					//  имя
 	int type;						//  тип
@@ -933,9 +1023,14 @@ struct uvsItemType{
 	int count;					   //  количество на мир
 	int param1, param2;		//  Начальное значение параметров
 	int gamer_use;
+	int family;
 
-		uvsItemType(void){ name = NULL; gamer_use = param1 = param2 = type = SteelerTypeFull = SteelerTypeEmpty = size = count = 0; }
-		uvsItemType(PrmFile* pfile);
+		uvsItemType(void) {
+			name = NULL;
+			gamer_use = param1 = param2 = type = SteelerTypeFull = SteelerTypeEmpty = size = count =
+				family = 0;
+		}
+		uvsItemType(PrmFile *pfile);
 		uvsItemType(XStream& pfile);
 		~uvsItemType(void){
 			if (name) delete[] name;
@@ -1009,6 +1104,8 @@ struct uvsMechosType{
 	int MaxFly;
 	int MaxDamage;
 	int MaxTeleport;
+	int UnitMatrixID;
+	int MotorSound;
 
 		uvsMechosType(void){ name  = NULL; constractor = price = sell_price = MaxSpeed  =MaxArmor = MaxEnergy = DeltaEnergy = DropEnergy = MaxFire = MaxWater = MaxOxigen = MaxFly = MaxTeleport = box[0] = box[1] = box[2] = box[3]= 0; 
 						   gamer_use = gamer_kill = 0;
@@ -1218,6 +1315,8 @@ struct uvsVanger : uvsElement, uvsTarget {
 	// устанавливает для UNITS текущий приказ
 	 UvsTargetType getOrder(uvsTarget*&);
 	int isActive(void){
+		if(!botsCanGoOut) return 0;
+
 		if ( status != UVS_VANGER_STATUS::RACE_HUNTER 
 	  && status != UVS_VANGER_STATUS::RACE 
 	  && status != UVS_VANGER_STATUS::MOVEMENT 
@@ -1382,3 +1481,5 @@ void uvsCheckKronIventTabuTask(int KronType, int Kroncount, int MYresult = 0, in
 void uvsKronDeleteItem(int type, int param2, int param1);
 int ActInt_param2(int InType);
 uvsVanger* uvsCreateNetVanger(int CarType, int Color, int PassageIndex,int TownTabutaskID);
+
+void LoadPersDataTable(void);

@@ -353,6 +353,7 @@ struct Model {
 	int xmax,ymax,zmax;
 	int xmin,ymin,zmin;
 	int x_off,y_off,z_off;
+
 	int rmax;
 	int memory_allocation_method;
 	
@@ -375,6 +376,7 @@ struct Model {
 	void calc_box(int xmin,int xmax,int ymin,int ymax,int zmin,int zmax,int delta);
 	void join(Model& m);
 	void free();
+
 
 	void prepare(int central = 0);
 	void move(Vector offset);

@@ -102,6 +102,7 @@
 XStream fmemory("memstats.dmp", XS_OUT);
 #endif
 
+
 #include <renderer/visualbackend/rust/RustVisualBackend.h>
 #include <renderer/visualbackend/VisualBackendContext.h>
 
@@ -400,6 +401,17 @@ int xtInitApplication(void) {
 #endif
 #endif
 
+	
+
+	std::cout << ":Revangers ";
+	#ifdef FDEBUG
+	std::cout << "WIP";
+	#else
+	std::cout << "DEMO";
+	#endif
+
+	std::cout<<std::endl;
+
     _MEM_STATISTIC_("BEGIN WORK WITH MEMORY -> ");
 
 #ifdef MEMORY_STATISTICS
@@ -468,7 +480,7 @@ int xtInitApplication(void) {
 
     emode = ExclusiveLog ? XGR_EXCLUSIVE : 0;
     //emode |= XGR_HICOLOR;
-
+	
 	actintLowResFlag = 1;
     if (XGR_Init(emode)) ErrH.Abort(ErrorVideoMss);
 

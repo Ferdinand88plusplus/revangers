@@ -253,7 +253,7 @@ Object::Object()
 	original_scale_size = scale_size = 1;
 	collision_object = 0;
 	slots_existence = 0;
-	memset(data_in_slots,0,MAX_SLOTS*sizeof(Object*));
+	//memset(data_in_slots,0,MAX_SLOTS*MAX_SUBSLOTS*sizeof(Object*));
 	old_appearance_storage = 0;
 
   	set_body_color(COLORS_IDS::BODY_RED);
@@ -330,7 +330,7 @@ void Object::free()
 	debris = nullptr;
 	bound_debris = nullptr;
 	slots_existence = 0;
-	memset(data_in_slots, 0, MAX_SLOTS*sizeof(Object*));
+	//memset(data_in_slots, 0, MAX_SLOTS*MAX_SUBSLOTS*sizeof(Object*));
 }
 void Object::loadM3D(char* name)
 {
@@ -371,10 +371,9 @@ void Object::loadM3D(char* name)
 	if(slots_existence){
 		for(i = 0;i < MAX_SLOTS;i++){
 			buf > R_slots[i] > location_angle_of_slots[i];
-			data_in_slots[i] = 0;
-			}
+			
 		}
-
+	}
 	dynamics_init(name);
 }
 void Object::loadA3D(char* name)
@@ -477,10 +476,56 @@ void Object::load(char* name,int size_for_m3d)
 #endif
 	ErrH.Abort("Unable to recognize 3d model file extension");
 }
-
-void Object::lay_to_slot(int slot,Object* weapon)
+/*
+void Object::clear_slot(int slot)
 {
-	if(!((1 << slot) & slots_existence))
-		return;
-	data_in_slots[slot] = weapon;
+	for (int i = 0; i < MAX_SUBSLOTS; i++) {
+		data_in_slots[slot * MAX_SUBSLOTS + i] = 0;
+	}
 }
+*/
+/*
+int Object::lay_to_slot(int slot,Object* weapon, bool take_out)
+{
+
+	return 0;
+}
+*/
+/*
+int Object::update_cords(int slot, int subslots_num) 
+{
+	Object *obj = 0;
+	int total_width = 0;
+	int delta = 0;
+	int cur_offs = 0;
+	int start_off = 0;
+	int i, j;
+
+	i = slot;
+
+	for ( j = 0; j < subslots_num; j++) {
+		obj = data_in_slots[i * MAX_SUBSLOTS + j];
+
+		obj->model->render_off = 0;
+
+		total_width += obj->radius;
+	}		
+
+	delta = total_width / subslots_num;
+	start_off = -total_width / 2;
+
+	for (j = 0; j < subslots_num; j++) {
+		obj = data_in_slots[i * MAX_SUBSLOTS + j];
+
+		obj->model->render_off = start_off;
+		obj->model->render_off += cur_offs;
+
+		cur_offs += delta;
+
+	}
+
+	
+
+	return delta;
+}
+*/

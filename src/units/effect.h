@@ -27,6 +27,8 @@ const char EFF_PARTICLE06 = 12;
 const char EFF_PARTICLE_GENERATOR = 13;
 const char EFF_PARTICLE07 = 14;
 
+const char EFF_PARTICLE08 = 15;
+
 const int PARTICLE_SIZE01 = 30;
 const int PARTICLE_SIZE02 = 5000;
 const int PARTICLE_SIZE03 = 30;
@@ -34,6 +36,7 @@ const int PARTICLE_SIZE04 = 300;
 const int PARTICLE_SIZE05 = 30;
 const int PARTICLE_SIZE06 = 500;
 const int PARTICLE_SIZE07 = 8;
+const int PARTICLE_SIZE08 = 30;
 
 const int PARTICLE_DIRECT = 0;
 const int PARTICLE_REVERS = 1;

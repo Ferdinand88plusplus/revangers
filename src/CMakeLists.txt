@@ -79,7 +79,9 @@ SET(vangers_SRCS
 	xsocket.cpp
 	zmod_client.cpp
 	${WINDOWS_RES}
-	actint/layout.h)
+	actint/layout.h
+	WDisp.cpp
+)
 
 SET(vss_SRCS
 		vss/sys.cpp
@@ -100,7 +102,7 @@ if (ANDROID)
 		$<TARGET_OBJECTS:glad>
 	)
 else()
-	ADD_EXECUTABLE(vangers ${vangers_SRCS} ${vss_SRCS}
+	ADD_EXECUTABLE(vss ${vangers_SRCS} ${vss_SRCS}
 		$<TARGET_OBJECTS:xtool>
 		$<TARGET_OBJECTS:xgraph>
 		$<TARGET_OBJECTS:xsound>
@@ -115,7 +117,7 @@ else()
 		)
 	ENDIF(WIN32)
 
-	TARGET_LINK_LIBRARIES(vangers
+	TARGET_LINK_LIBRARIES(vss
 		${SDL2_LIBRARY}
 		${OGG_LIBRARY}
 		${VORBIS_LIBRARY}

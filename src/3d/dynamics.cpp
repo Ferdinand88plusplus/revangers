@@ -665,7 +665,7 @@ void Object::load_parameters(const char* name)
 	ENTRY(scale_bound);
 	ENTRY(scale_box);
 	ENTRY(z_offset_of_mass_center);
-
+	
 	// Car's params
 	ENTRY(speed_factor);
 	ENTRY(mobility_factor);
@@ -4039,6 +4039,15 @@ void Object::insect_analysis()
 /*******************************************************************************
 		SKY FARMER's functions
 *******************************************************************************/
+void Object::SkyfarmerTerrainPhysic() {
+	dynamic_state = 0;
+
+	uint HeightUnderMe = vMap->lineT[R_curr.y][R_curr.x];
+	if (HeightUnderMe + radius >= R_curr.z) {
+		dynamic_state |= GROUND_COLLISION;
+	}
+}
+
 void Object::skyfarmer_start(int x,int y,int angle)
 {
 	skyfarmer_fly_direction = 1;
@@ -4102,6 +4111,9 @@ void Object::skyfarmer_analysis(double dt)
 	V *= V_drag_skyfarmer;
 	W *= W_drag_skyfarmer;
 	speed = round(V.vabs());
+
+	SkyfarmerTerrainPhysic();
+	test_objects_collision();
 }
 
 int Object::check_terrain_type(int terrain_type)

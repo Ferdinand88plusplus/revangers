@@ -1,4 +1,8 @@
 
+
+#ifndef _ITEM_API_H_
+#define _ITEM_API_H_
+
 enum actintItemTypes
 {
 	// Weapons...
@@ -128,8 +132,17 @@ enum actintItemTypes
 	ACI_ROTTEN_PIPETKA,
 	ACI_ROTTEN_WEEZYK,
 
-	ACI_MAX_TYPE
+	// Revangers
+	ACI_NUCLEORUM,
+	ACI_HOTBEEB,
+	ACI_HOTBAG,
+	ACI_JABLEE_NW,
+	ACI_JABLEE_PS,
+	ACI_GHORBULATOR,
+	ACI_MAX_ID,
 };
+
+extern int ACI_MAX_TYPE;
 
 enum actintItemEvents
 {
@@ -142,6 +155,8 @@ enum actintItemEvents
 	ACI_GET_ITEM_DATA,
 	ACI_CHECK_MOUSE,
 	ACI_SET_DROP_LEVEL,
+	ACI_SLOT_OUT,
+	ACI_SLOT_IN,
 
 	ACI_PUT_IN_SLOT,
 
@@ -196,7 +211,10 @@ struct actintItemData
 	int maxData;
 
 	int flags;
-	int slot;
+	char slot;
+	char subslot;
+
+	char ActiveState;
 
 	void* actintOwner;
 	void* stuffOwner;
@@ -333,3 +351,5 @@ void XpeditionOFF(int type);
 void FakeOfMight(void);
 
 void GetNetworkGameTime(int& day,int& hour,int& min,int& sec);
+
+#endif

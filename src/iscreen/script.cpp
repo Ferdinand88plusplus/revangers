@@ -188,6 +188,22 @@ void ScriptFile::load(const char* fname)
 		if(inc_count > iSCRIPT_INCLUDE_MAX) ErrH.Abort("process_includes() failed...");
 	}
 
+	
+#	ifdef _SCRIPT_DEBUG_
+	XBuffer dbname;
+	dbname < fname;
+	dbname < ".dbg";
+	XStream dbbuf(dbname.buf, XS_OUT);
+	dbbuf < buffer;
+	ScriptFileBuffer *scbuf = lBuf;
+	while (scbuf) {
+		dbbuf < scbuf->buffer;
+
+		scbuf = scbuf->next;
+	}
+	dbbuf.close();
+#	endif
+
 #ifdef _SAVE_BINARY_SCRIPT_
 	open_bscript(fname);
 #endif

@@ -10,6 +10,9 @@
 #include "../terra/vmap.h"
 #include "../terra/render.h"
 
+#include "../WDisp.h"
+
+
 #define MIN_SHADOW_dZ	4
 #define OBJSHADOW_H	50
 #define GET_MIDDLE_HIGHT(lh,uh)		(uh - lh > 130 ? lh + 110 : lh + 48)
@@ -133,6 +136,7 @@ void Object::set_body_color(unsigned int color_id)
 void Object::draw()
 {
 	int i;
+	Object *slotObj = 0;
 	if(n_models > 1)
 		model = &models[((i_model += (int)round(traction / GAME_TIME_COEFF)) >> 8) % n_models];
 	COLORS_VALUE_TABLE[2*COLORS_IDS::BODY] = body_color_offset;
@@ -170,23 +174,42 @@ void Object::draw()
 	model -> z_buffering_draw();
 
 	if(ID & ID_VANGER){
-		for(i = 0;i < MAX_SLOTS;i++)
-			if(data_in_slots[i]){
-				double scl = data_in_slots[i] -> scale_size/original_scale_size;
-				if(location_angle_of_slots[i]){
-					DBM A_c2p = DBM(location_angle_of_slots[i],Y_AXIS);
-					DBM A_p2c = transpose(A_c2p);
+		double scl;
+		DBM A_c2p, A_p2c;
+		Vector off;
+
+		for(SubRenderReq* req : render_reqs){
+			scl = req->object->scale_size / original_scale_size;
+			switch(req->type){
+			case SubRenderReq::Weapon:
+				if (location_angle_of_slots[req->data]) {
+					A_c2p = DBM(location_angle_of_slots[req->data], Y_AXIS);
+					A_p2c = transpose(A_c2p);
 					A_c2p *= scl;
-					Vector off = A_c2p*Vector(data_in_slots[i] -> model -> x_off,data_in_slots[i] -> model -> y_off,data_in_slots[i] -> model -> z_off);
-					data_in_slots[i] -> model -> draw_child(R_slots[i] - off,A_c2p,A_p2c);
-					}
-				else{
-					Vector off = Vector(data_in_slots[i] -> model -> x_off,data_in_slots[i] -> model -> y_off,data_in_slots[i] -> model -> z_off)*scl;
-					data_in_slots[i] -> model -> draw_child(R_slots[i] - off,DBM()*scl,DBM());
-					}
+					off =
+						A_c2p * (Vector(
+									req->object->model->x_off,
+									req->object->model->y_off,
+									req->object->model->z_off) + req->offs);
+					
+					req->object->model->draw_child(R_slots[req->data] - off, A_c2p, A_p2c);
+				} else {
+					off =
+						(Vector(
+									req->object->model->x_off,
+									req->object->model->y_off,
+									req->object->model->z_off) + req->offs) * scl;
+					off += req->offs;
+					req->object->model->draw_child(R_slots[req->data] - off, DBM() * scl, DBM());
 				}
-		 
-		DBM A_c2p = DBM(rudder,Z_AXIS);
+				break;
+			}
+
+			delete req;
+		}
+		render_reqs.clear();
+		
+		A_c2p = DBM(rudder,Z_AXIS);
 		#ifdef _MT_
 		if(model == models)
 		#endif

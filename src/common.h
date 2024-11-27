@@ -146,4 +146,8 @@ extern  XStream fmemory;
 #define _MEM_STATISTIC_(a) ;
 #endif
 
+
+#define RVERR(mess, subj) ErrH.Abort("[RV] " mess, 1, -1, subj);
+
+
 #endif

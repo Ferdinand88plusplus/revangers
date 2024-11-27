@@ -9,6 +9,8 @@
 #define MOVELAND_ON
 #define DEVICE_ON
 
+#define SAVE_GENERATED_PALS
+
 //#define STACK_EMPTY_IGNORE
 
 const int SOBJ_ACTIVE = 1;
@@ -22,7 +24,7 @@ const int FIXED_SHIFT = 8;
 const int DSHIFT = 8;
 
 const char MAX_ACTION_UNIT = 1;
-const char MAX_EFFECT_TYPE = 15;
+const char MAX_EFFECT_TYPE = 16;
 const char MAX_ITEMS_OBJECT = 3;
 const char MAX_MAP_OBJECT = 5;
 

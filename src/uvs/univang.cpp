@@ -124,6 +124,8 @@ void uvsMechosLoad(XStream&);
 
 void MLReset(void);
 
+void aciGenerateItem(int id);
+
 int GeneralMapReload = 0;
 extern uchar** WorldPalData;
 
@@ -217,8 +219,9 @@ static const char* PrmFileName[] = {
 	"car.prm",             //7
 	"price.prm",          //8
 	"crypt.prm",         //9
-	"tabutask.prm"   //10
-	};
+	"tabutask.prm",	 // 10
+	"car_flags.prm", // 11	
+};
 
 //zmod2005
 //static char* uvsStrings[] = {
@@ -246,6 +249,8 @@ listElem* DollyTail = NULL;
 uvsMechosType** uvsMechosTable;
 uvsItemType** uvsItemTable;
 const char *uvsTownName = NULL;
+int *aci2UvsIDTable;
+PersData** PersDataList;
 
 uvsActInt* GMechos;
 uvsActInt* GGamerMechos;
@@ -272,6 +277,7 @@ int uvsQuantity = 0;
 int uvsGamerWaitGame = 0;
 time_t uvsFirstTime = 0;
 int uvsNetworkChangeWorld = 0;
+bool botsCanGoOut = 1;
 
 static unsigned int ChainMap[MAIN_WORLD_MAX*MAIN_WORLD_MAX] = {
 	0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFF1, 0xFFFFFFF1,
@@ -456,13 +462,21 @@ void uniVangPrepare(void){
 	pfile.init(PrmFileName[6]);
 	if(strcmp(PrmSignature,pfile.getAtom())) ErrH.Abort(PrmWrongMsg,XERR_USER,-1,PrmFileName[6]);
 
+	ACI_MAX_TYPE = atoi(pfile.getAtom());
 	MAX_ITEM_TYPE = atoi(pfile.getAtom());
 	uvsItemTable = new uvsItemType*[MAX_ITEM_TYPE];
+	aci2UvsIDTable = new int[ACI_MAX_TYPE];
 
 	for( i = 0; i < MAX_ITEM_TYPE; i++){
 		uvsItemTable[i] = new uvsItemType(&pfile);
+
+		
+		aci2UvsIDTable[uvsItemTable[i]->SteelerTypeEmpty] = i;
+		aci2UvsIDTable[uvsItemTable[i]->SteelerTypeFull] = i; 
 	}//  end for i
 	pfile.finit();
+
+	LoadPersDataTable();
 
 	// worlds initing
 	pfile.init(PrmFileName[0]);
@@ -505,6 +519,89 @@ void uniVangPrepare(void){
 		uvsMechosTable[i] = new uvsMechosType(&pfile);
 	}//  end for i
 	pfile.finit();
+
+	// Revangers::human readable flags initing for mechoses
+	pfile.init(PrmFileName[11]);
+	if (strcmp(PrmSignature, pfile.getAtom()))
+		ErrH.Abort(PrmWrongMsg, XERR_USER, -1, PrmFileName[11]);
+
+	std::vector<char *> Names;
+	std::vector<char *> Flags;
+
+	enum MiniParseModes { Name, NameSep, Flag, FlagSep };
+
+	char ParseMode = Name;
+	bool KeepParsing = 1;
+
+#define SyntaxisErr(text, subj) \
+	ErrH.Abort("car_flags.prm Syntaxis error: " text, 1, ParseMode, subj)
+
+	while (KeepParsing) {
+		char *buf = pfile.getAtom();
+		switch (ParseMode) {
+		case Name:
+			if (!strcmp("EOF", buf)) {
+				KeepParsing = 0;
+				break;
+			}
+
+			Names.push_back(buf);
+			ParseMode = NameSep;
+			break;
+		case NameSep:
+			if (!strcmp("/", buf)) {
+				ParseMode = Name;
+				break;
+			}
+			if (!strcmp("=", buf)) {
+				ParseMode = Flag;
+				break;
+			}
+			SyntaxisErr("Unknown char mid mechos names: ", buf);
+			break;
+		case Flag:
+			Flags.push_back(buf);
+			ParseMode = FlagSep;
+
+			break;
+		case FlagSep:
+			if (!strcmp("/", buf)) {
+				ParseMode = Flag;
+				break;
+			}
+			if (!strcmp(";", buf)) {
+				for (char *MechName : Names) {
+					for (i = 0; i < MAX_MECHOS_TYPE; i++) {
+						if (!strcmp(MechName, uvsMechosTable[i]->name)) {
+							for (char *FlagName : Flags) {
+								if (!strcmp("RuffaGun", FlagName)) {
+									uvsMechosTable[i]->MaxFire |= VANGER_POWER_RUFFA_GUN;
+									continue;
+								}
+								if (!strcmp("SwimAlways", FlagName)) {
+									uvsMechosTable[i]->MaxFire |= VANGER_POWER_SWIM_ALWAYS;
+									continue;
+								}
+								SyntaxisErr("Unknown flag: ", FlagName);
+							}
+							break;
+						}
+					}
+					if (i == MAX_MECHOS_TYPE) {
+						SyntaxisErr("Unknown mechos: ", MechName);
+					}
+				}
+				Names.clear();
+				Flags.clear();
+
+				ParseMode = Name;
+				break;
+			}
+			SyntaxisErr("Unkown char mid flags: ", buf);
+			break;
+		}
+	}
+	
 
 	// TabuTask Initing
 	MAX_TABUTASK = 0;
@@ -790,9 +887,39 @@ void uniVangPrepare(void){
 	v -> Pescave -> Pbunch -> currentStage = 0;
 #endif
 
-	//zNfo  DEFAULT MECHOS 
-	// 16 = моток
-	int MechosID = 0;
+		Parser startConsts("start_consts.lst");
+
+	startConsts.search_name("StartMechosName");
+	char *MechosName = startConsts.get_name();
+	uvsMechosType *MechosPtr = 0;
+	int MechosID = -1;
+	for (int i = 0; i < MAX_MECHOS_TYPE; i++) {
+		MechosPtr = uvsMechosTable[i];
+		if (!strcmp(MechosPtr->name, MechosName)) {
+			MechosID = i;
+			break;
+		}
+	}
+
+	if (MechosID == -1) {
+		RVERR("(startConsts): Unknown mechos name", MechosName);
+	}
+
+	startConsts.search_name("StartBeebosCount");
+	aciUpdateCurCredits(startConsts.get_int());
+
+	startConsts.search_name("StartItemsID");
+	while(1){
+		char* word = startConsts.get_name();
+		if(!strcmp(word, ";")) break;
+		int id = atoi(word);
+		
+		startItemsID.push_back(id);
+	}
+
+	startConsts.search_name("BotsCanGoOut");
+	botsCanGoOut = startConsts.get_int();
+
 	if (NetworkON) switch (z_my_server_data.mod_id) {
 		case Z_MODS_RAFARUN_ID:		{ MechosID = 16; break; } // моток
 		case Z_MODS_TRAKTRIAL_ID:	{ MechosID =  7; break; } // аттрактор
@@ -1058,13 +1185,15 @@ uvsItemType::uvsItemType(PrmFile* pfile){
 	name = new char[strlen(s)+1];
 	strcpy(name, s);
 
-	type = atoi(pfile -> getAtom());
-	SteelerTypeFull = atoi(pfile -> getAtom());
-	SteelerTypeEmpty = atoi(pfile -> getAtom());
-	size  = atoi(pfile -> getAtom());
-	count  = atoi(pfile -> getAtom());
-	param1	= atoi(pfile -> getAtom());
-	param2	= atoi(pfile -> getAtom());
+	type = atoi(pfile->getAtom());
+
+	SteelerTypeFull = atoi(pfile->getAtom());
+	SteelerTypeEmpty = atoi(pfile->getAtom());
+	size = atoi(pfile->getAtom());
+	count = atoi(pfile->getAtom());
+	param1 = atoi(pfile->getAtom());
+	param2 = atoi(pfile->getAtom());
+	family = atoi(pfile->getAtom());
 	gamer_use = 0;
 }
 
@@ -1116,33 +1245,37 @@ uvsWorld::~uvsWorld(void){
 	}//  while
 }
 
-uvsMechosType::uvsMechosType(PrmFile* pfile){
+uvsMechosType::uvsMechosType(PrmFile *pfile) {
 	char *s;
-	s = pfile -> getAtom();
-	name = new char[strlen(s)+1];
+	s = pfile->getAtom();
+	name = new char[strlen(s) + 1];
 	strcpy(name, s);
-
-	type = atoi(pfile -> getAtom());
-	price = atoi(pfile -> getAtom());							  //  цена
-	sell_price = atoi(pfile -> getAtom());						 //  цена
-	box[0] =  atoi(pfile -> getAtom());							//  вместимость( количество слотов данного вида)
-	box[1] =  atoi(pfile -> getAtom());							//  вместимость( количество слотов данного вида)
-	box[2] =  atoi(pfile -> getAtom());							//  вместимость( количество слотов данного вида)
-	box[3] =  atoi(pfile -> getAtom());							//  вместимость( количество слотов данного вида)
+	type = atoi(pfile->getAtom());
+	price = atoi(pfile->getAtom());		 //  цена
+	sell_price = atoi(pfile->getAtom()); //  цена
+	box[0] = atoi(pfile->getAtom()); //  вместимость( количество слотов данного вида)
+	box[1] = atoi(pfile->getAtom()); //  вместимость( количество слотов данного вида)
+	box[2] = atoi(pfile->getAtom()); //  вместимость( количество слотов данного вида)
+	box[3] = atoi(pfile->getAtom()); //  вместимость( количество слотов данного вида)
 	gamer_use = 0;
 	gamer_kill = 0;
-	MaxSpeed =  atoi(pfile -> getAtom());
-	MaxArmor =  atoi(pfile -> getAtom());
-	MaxEnergy =  atoi(pfile -> getAtom());
-	DeltaEnergy =  atoi(pfile -> getAtom());
-	DropEnergy =  atoi(pfile -> getAtom());
-	DropTime =  atoi(pfile -> getAtom());
-	MaxFire =  atoi(pfile -> getAtom());
-	MaxWater =  atoi(pfile -> getAtom());
-	MaxOxigen =  atoi(pfile -> getAtom());
-	MaxFly =  atoi(pfile -> getAtom());
-	MaxDamage =  atoi(pfile -> getAtom());
-	MaxTeleport =  atoi(pfile -> getAtom());
+	MaxSpeed = atoi(pfile->getAtom());
+	MaxArmor = atoi(pfile->getAtom());
+	MaxEnergy = atoi(pfile->getAtom());
+	DeltaEnergy = atoi(pfile->getAtom());
+	DropEnergy = atoi(pfile->getAtom());
+	DropTime = atoi(pfile->getAtom());
+
+	MaxWater = atoi(pfile->getAtom());
+	MaxOxigen = atoi(pfile->getAtom());
+	MaxFly = atoi(pfile->getAtom());
+	MaxDamage = atoi(pfile->getAtom());
+	MaxTeleport = atoi(pfile->getAtom());
+	UnitMatrixID = atoi(pfile->getAtom());
+	MotorSound = atoi(pfile->getAtom());
+
+	MaxFire = 0;
+
 	constractor = 0;
 }
 
@@ -1330,8 +1463,10 @@ uvsEscave::uvsEscave(PrmFile* pfile,char* atom){
 		int type;
 		type = GetItem_as_name( s );
 
-		if( type == -1)
-			ErrH.Abort(PrmWrongValue,XERR_USER,-1,"TREASURE Name");
+		if (type == -1) {
+			std::cout<<"String: "<<s<<'\n';
+			ErrH.Abort(PrmWrongValue, XERR_USER, -1, "TREASURE Name");
+		}
 		pi = new uvsItem(type);
 		pi -> param1 = 0;
 		pi -> param2 = Pworld -> gIndex;
@@ -1427,8 +1562,10 @@ uvsSpot::uvsSpot(PrmFile* pfile,char* atom){
 	if (strcmp( s, PrmNoneGame)){
 		int type = GetItem_as_name( s );
 
-		if( type == -1)
-			ErrH.Abort(PrmWrongValue,XERR_USER,-1,"TREASURE Name");
+		if (type == -1) {
+			std::cout << "String: " << s << '\n';
+			ErrH.Abort(PrmWrongValue, XERR_USER, -1, "TREASURE Name");
+		}
 
 		pi = new uvsItem(type);
 		pi -> param1 = 0;
@@ -1818,6 +1955,18 @@ void uvsShop::addMechos(uvsMechos* Pm){
 void uvsShop::addItem(uvsItem* Pi){
 	((listElem*)Pi) -> link( Pitem );
 }
+
+void uvsShop::fAddEverything() {
+	int i;
+	for (i = 0; i < MAX_MECHOS_TYPE; i++) {
+		addMechos(new uvsMechos(i));
+	}
+	for (i = 0; i < MAX_ITEM_TYPE; i++) {
+		addItem(new uvsItem(i));
+		addItem(new uvsItem(i));
+	}
+}
+
 
 int  uvsShop::FindMechos(int Type){
 	listElem *pm = Pmechos;
@@ -2276,10 +2425,11 @@ void uvsVanger::get_list_from_ActInt( uvsActInt*& Item, uvsActInt*& Mechos){
 			Pmechos = new uvsMechos(Mechos -> type);
 		}
 
-		if (strcmp(uvsMechosTable[Pmechos -> type] -> name, "LawnMower"))
-			SetMotorFile(uvsMechosTable[Pmechos -> type] -> type);
-		else
-			SetMotorFile(6);
+		if (uvsMechosTable[Pmechos->type]->MotorSound == -1) {
+			SetMotorFile(uvsMechosTable[Pmechos->type]->type);
+		} else {
+			SetMotorFile(uvsMechosTable[Pmechos->type]->MotorSound);
+		}
 #ifndef _DEMO_
 		Pmechos -> color = Mechos -> param1;
 #else
@@ -5881,6 +6031,8 @@ void uvsVanger::Quant(void){
 			switch(status){
 #ifdef _ROAD_
 			case UVS_VANGER_STATUS::GO_NEW_WORLD:
+
+								//! passage info
 				/*{
 					Pworld -> getItemFromCrypt(UVS_CRYPT::DEVICE);
 					Pworld -> getItemFromCrypt(UVS_CRYPT::AMMO);
@@ -5891,6 +6043,7 @@ void uvsVanger::Quant(void){
 				}*/
 
 				EffectsOff();
+
 
 				Pworld -> GamerVisit++;
 
@@ -9200,7 +9353,7 @@ int ActInt_to_Item( int InType){
 
 	if (InType == TABUTASK_BAD)
 		return UVS_ITEM_TYPE::TABUTASK;
-
+	/*
 	for( i = 0; i < MAX_ITEM_TYPE; i++)
 		if( uvsItemTable[i] -> SteelerTypeFull == InType ) return i;
 
@@ -9208,6 +9361,8 @@ int ActInt_to_Item( int InType){
 		if( (uvsItemTable[i] -> SteelerTypeEmpty) == InType ) return i;
 
 	return -1;
+	*/
+	return aci2UvsIDTable[InType];
 }
 
 int uvsChangeGoodsParam( int type, int& param1, int& param2, int world){
@@ -9258,7 +9413,10 @@ int uvsMechosType_to_AciInt(int type){
 
 int GetItem_as_name( char* s ){
 	int i;
-	for(i = 0; i < MAX_ITEM_TYPE; i++) if (!strcmp(s, uvsItemTable[i] -> name)) return i;
+	for (i = 0; i < MAX_ITEM_TYPE; i++) {
+		if (!strcmp(s, uvsItemTable[i]->name))
+			return i;
+	}
 	return -1;
 }
 
@@ -12136,4 +12294,86 @@ int uvsWorldToCross(int fromWID, int toWID){
 	}
 	_i_++;
 	return (_i_);
+}
+
+
+#define PDLInt(PrmName) \
+	in->search_name(#PrmName);   \
+	PrmName = in->get_int();
+
+#define PDLStr(PrmName) \
+	in->search_name(#PrmName);   \
+	PrmName = in->get_name();
+
+#define PDLDbl(PrmName) \
+	in->search_name(#PrmName);   \
+	PrmName = in->get_double();
+
+void LandMineData::Load(Parser *in) {
+	PDLInt(DamagePower);
+	PDLInt(ImpulsePower);
+	PDLInt(ExplodeSprite);
+	PDLInt(CraterType);
+
+	DamagePower = (DamagePower << 16) / 100;
+}
+
+void LandMineBagData::Load(Parser *in) {
+	PDLInt(DamagePower);
+	PDLInt(ImpulsePower);
+	PDLInt(ExplodeSprite);
+	PDLInt(CraterType);
+	PDLDbl(BunchImpulse);
+	PDLInt(BunchSize);
+
+	DamagePower = (DamagePower << 16) / 100;
+}
+
+void EarthmoverData::Load(Parser *in) {
+	PDLInt(ReloadCrater);
+	PDLInt(DirtHillRadius);
+}
+
+const char *PersDataStr[PersDataType::Size] = {
+	"LandMine",
+	"LandMineBag",
+	"Earthmover",
+};
+
+PersData* LoadPersData(int type)
+{
+	PersData* Data = 0;
+	XBuffer Path;
+	Path.alloc(256);
+
+	Path < "persdata/";
+	Path < PersDataStr[type];
+	Path < ".lst";
+
+	Parser Loader(Path.buf);
+
+	switch(type){
+		case PersDataType::Earthmover:
+			Data = new EarthmoverData;
+			break;
+		case PersDataType::LandMine:
+			Data = new LandMineData;
+			break;
+		case PersDataType::LandMineBag:
+			Data = new LandMineBagData;
+			break;
+	}
+
+	Data->Load(&Loader);
+
+	return Data;
+}
+
+void LoadPersDataTable() 
+{
+	PersDataList = new PersData*[PersDataType::Size];
+	for(int type = 0; type < PersDataType::Size; type++){
+		PersData* Data = LoadPersData(type);
+		PersDataList[type] = Data;
+	}
 }
